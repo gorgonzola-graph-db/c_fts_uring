@@ -1,0 +1,15 @@
+*.o
+*.a
+*.so
+*.dylib
+*.dat
+*.wal
+*.db
+c_fts_poc
+c_tabular_poc
+c_wal_bp_poc
+c_phase2_3_poc
+mock_shard_*
+tab_shard_*
+wal_bp_*
+test_phase2_3.*
