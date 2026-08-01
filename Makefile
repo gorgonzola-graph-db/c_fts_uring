@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -Wall -O2 -Iinclude
+CFLAGS = -Wall -O2 -fPIC -Iinclude
 LDFLAGS = -luv -lm -lrt
 
 FTS_SRCS = src/lexicon.c src/shard_worker.c src/uv_loop.c src/main.c
@@ -14,7 +14,10 @@ WAL_OBJS = $(WAL_SRCS:.c=.o)
 P23_SRCS = src/slotted_page.c src/wal.c src/buffer_pool.c src/btree.c src/fts_indexer.c src/main_phase2_3.c
 P23_OBJS = $(P23_SRCS:.c=.o)
 
-TARGETS = c_fts_poc c_tabular_poc c_wal_bp_poc c_phase2_3_poc
+TARGETS = c_fts_poc c_tabular_poc c_wal_bp_poc c_phase2_3_poc fts_uring.so
+
+VTAB_SRCS = src/vtab_bridge.c src/unified_shard.c src/wal.c src/buffer_pool.c src/slotted_page.c src/btree.c src/fts_indexer.c src/shard_worker.c
+VTAB_OBJS = $(VTAB_SRCS:.c=.o)
 
 all: $(TARGETS)
 
@@ -30,8 +33,11 @@ c_wal_bp_poc: $(WAL_OBJS)
 c_phase2_3_poc: $(P23_OBJS)
 	$(CC) $(P23_OBJS) -o c_phase2_3_poc $(LDFLAGS)
 
+fts_uring.so: $(VTAB_OBJS)
+	$(CC) -g -fPIC -shared $(VTAB_OBJS) -o fts_uring.so $(LDFLAGS)
+
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f src/*.o $(TARGETS) mock_shard_*.dat tab_shard_*.dat wal_bp_*.dat wal_bp_*.wal test_phase2_3.*
+	rm -f src/*.o $(TARGETS) fts_uring.so mock_shard_*.dat tab_shard_*.dat wal_bp_*.dat wal_bp_*.wal test_phase2_3.* fts_uring_data/*
