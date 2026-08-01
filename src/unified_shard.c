@@ -125,7 +125,9 @@ int shard_insert_document(UnifiedShard *shard, WALManager *wal,
                           const uint8_t node_id[16],
                           const uint32_t tf[MAX_FTS_FIELDS],
                           const uint32_t dl[MAX_FTS_FIELDS],
-                          const float embedding[EMBEDDING_DIM]) {
+                          const float embedding[EMBEDDING_DIM],
+                          const uint32_t *term_ids,
+                          uint32_t num_terms) {
     UnifiedDocRecord rec;
     memcpy(rec.node_id, node_id, 16);
     memcpy(rec.term_frequencies, tf, sizeof(uint32_t) * MAX_FTS_FIELDS);
@@ -164,18 +166,34 @@ int shard_insert_document(UnifiedShard *shard, WALManager *wal,
         shard->avgdl[i] = shard->sum_dl[i] / shard->total_docs;
     }
 
-    // Update inverted index: for each field with tf > 0, add a posting.
-    // We use a synthetic term_id = field_index for now; the VTab bridge
-    // will use the Lexicon to map real terms to IDs before calling search.
-    // This adds the doc to the B-Tree so shard_search_bm25f_indexed can find it.
-    for (int i = 0; i < MAX_FTS_FIELDS; i++) {
-        if (tf[i] > 0) {
-            inverted_index_add_posting(shard, 0, rec.doc_id, inserted_page_id, inserted_slot_id);
-            break;  // Only need one posting per doc for the generic key
-        }
+    // Add postings for provided terms
+    for (uint32_t i = 0; i < num_terms; i++) {
+        inverted_index_add_posting(shard, term_ids[i], rec.doc_id, inserted_page_id, inserted_slot_id);
     }
+    
+    // Also always add to term 0 so old generic queries work if needed
+    inverted_index_add_posting(shard, 0, rec.doc_id, inserted_page_id, inserted_slot_id);
 
     return 0;
+}
+
+int engine_insert_document(UnifiedEngine *engine,
+                           const uint8_t node_id[16],
+                           const uint32_t tf[MAX_FTS_FIELDS],
+                           const uint32_t dl[MAX_FTS_FIELDS],
+                           const float embedding[EMBEDDING_DIM],
+                           const uint32_t *term_ids,
+                           uint32_t num_terms) {
+    // Hash node_id to select shard
+    uint32_t hash = 0;
+    for (int i = 0; i < 16; i++) {
+        hash = (hash * 31) + node_id[i];
+    }
+    uint32_t shard_idx = hash % engine->num_shards;
+    
+    return shard_insert_document(&engine->shards[shard_idx],
+                                 &engine->shards[shard_idx].wal,
+                                 node_id, tf, dl, embedding, term_ids, num_terms);
 }
 
 int shard_delete_document(UnifiedShard *shard, uint32_t doc_id) {

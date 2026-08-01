@@ -108,7 +108,9 @@ int shard_insert_document(UnifiedShard *shard, WALManager *wal,
                           const uint8_t node_id[16],
                           const uint32_t tf[MAX_FTS_FIELDS],
                           const uint32_t dl[MAX_FTS_FIELDS],
-                          const float embedding[EMBEDDING_DIM]);
+                          const float embedding[EMBEDDING_DIM],
+                          const uint32_t *term_ids,
+                          uint32_t num_terms);
 
 // MVCC: Mark a document as deleted (atomic bit flip, no locks)
 int shard_delete_document(UnifiedShard *shard, uint32_t doc_id);
@@ -141,5 +143,13 @@ void   compute_rrf_fusion(UnifiedSearchResult *results, uint32_t count);
 
 // Statistics
 void engine_recompute_global_stats(UnifiedEngine *engine);
+
+int engine_insert_document(UnifiedEngine *engine,
+                           const uint8_t node_id[16],
+                           const uint32_t tf[MAX_FTS_FIELDS],
+                           const uint32_t dl[MAX_FTS_FIELDS],
+                           const float embedding[EMBEDDING_DIM],
+                           const uint32_t *term_ids,
+                           uint32_t num_terms);
 
 #endif // UNIFIED_SHARD_H
