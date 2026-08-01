@@ -15,7 +15,7 @@ print("[4] Querying for the AST node snippet 'DataCollector' inserted by our C p
 cursor = conn.execute("""
     SELECT node_id, bm25f_score, cosine_score, rrf_score 
     FROM pecorino_ast 
-    WHERE query = 'DataCollector'
+    WHERE query MATCH 'DataCollector'
 """)
 
 for row in cursor.fetchall():

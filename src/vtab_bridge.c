@@ -86,7 +86,9 @@ static int ftsClose(sqlite3_vtab_cursor *cur) {
 
 static int ftsBestIndex(sqlite3_vtab *tab, sqlite3_index_info *pIdxInfo) {
     for(int i = 0; i < pIdxInfo->nConstraint; i++){
-        if( pIdxInfo->aConstraint[i].iColumn == 4 && pIdxInfo->aConstraint[i].op == SQLITE_INDEX_CONSTRAINT_EQ ){
+        if( pIdxInfo->aConstraint[i].iColumn == 4 && 
+            (pIdxInfo->aConstraint[i].op == SQLITE_INDEX_CONSTRAINT_EQ || 
+             pIdxInfo->aConstraint[i].op == SQLITE_INDEX_CONSTRAINT_MATCH) ){
             pIdxInfo->aConstraintUsage[i].argvIndex = 1;
             pIdxInfo->aConstraintUsage[i].omit = 1;
             pIdxInfo->estimatedCost = 10.0;
