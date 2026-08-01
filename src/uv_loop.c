@@ -11,7 +11,8 @@ typedef struct {
     int shard_idx;
     char *buffer;
     double idf;
-    double avgdl;
+    double avgdl[MAX_FTS_FIELDS];
+    double weights[MAX_FTS_FIELDS];
     double k1;
     double b;
 } ShardReadContext;
@@ -25,8 +26,8 @@ void on_read_cb(uv_fs_t *req) {
         printf("EOF on shard %d\n", ctx->shard_idx);
     } else {
         printf("Successfully read %zd bytes from shard %d:\n", req->result, ctx->shard_idx);
-        // Deserializes posting payload and computes BM25 score
-        process_shard_buffer(ctx->buffer, (size_t)req->result, ctx->idf, ctx->avgdl, ctx->k1, ctx->b);
+        // Deserializes posting payload and computes BM25F score
+        process_shard_buffer(ctx->buffer, (size_t)req->result, ctx->idf, ctx->avgdl, ctx->weights, ctx->k1, ctx->b);
     }
     
     uv_fs_req_cleanup(req);
@@ -47,14 +48,17 @@ void fts_cleanup_uv() {
 }
 
 // Submits asynchronous reads for all shards to the libuv event loop
-void scatter_query_to_shards_uv(int *shard_fds, int num_shards, char **buffers, size_t read_size, double idf, double avgdl, double k1, double b) {
+void scatter_query_to_shards_uv(int *shard_fds, int num_shards, char **buffers, size_t read_size, double idf, const double avgdl[MAX_FTS_FIELDS], const double weights[MAX_FTS_FIELDS], double k1, double b) {
     for (int i = 0; i < num_shards; i++) {
         ShardReadContext *ctx = malloc(sizeof(ShardReadContext));
         ctx->req.data = ctx;
         ctx->shard_idx = i;
         ctx->buffer = buffers[i];
         ctx->idf = idf;
-        ctx->avgdl = avgdl;
+        for (int j = 0; j < MAX_FTS_FIELDS; j++) {
+            ctx->avgdl[j] = avgdl[j];
+            ctx->weights[j] = weights[j];
+        }
         ctx->k1 = k1;
         ctx->b = b;
         
