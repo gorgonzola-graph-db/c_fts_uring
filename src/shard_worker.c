@@ -2,20 +2,29 @@
 #include <stdio.h>
 #include <string.h>
 
-// Calculates single document score for a term given TF, document length, avgdl, and IDF
-double compute_bm25_score(uint32_t tf, uint32_t doc_len, double avgdl, double idf, double k1, double b) {
-    if (tf == 0 || avgdl <= 0.0) {
+// Calculates single document score for a term given TF array, doc length array, avgdl array, field weights, and IDF
+double compute_bm25f_score(const uint32_t tf[MAX_FTS_FIELDS], const uint32_t doc_len[MAX_FTS_FIELDS], const double avgdl[MAX_FTS_FIELDS], const double weights[MAX_FTS_FIELDS], double idf, double k1, double b) {
+    double f = 0.0;
+    
+    // Calculate normalized term frequency across all fields
+    for (int i = 0; i < MAX_FTS_FIELDS; i++) {
+        if (weights[i] > 0.0 && avgdl[i] > 0.0 && tf[i] > 0) {
+            double len_norm = 1.0 - b + b * ((double)doc_len[i] / avgdl[i]);
+            f += weights[i] * ((double)tf[i] / len_norm);
+        }
+    }
+    
+    if (f == 0.0) {
         return 0.0;
     }
-    double f = (double)tf;
-    double len_norm = 1.0 - b + b * ((double)doc_len / avgdl);
+    
     double numerator = f * (k1 + 1.0);
-    double denominator = f + k1 * len_norm;
+    double denominator = f + k1;
     return idf * (numerator / denominator);
 }
 
-// Deserializes buffer into ShardPostingList and computes BM25 scores for each posting
-void process_shard_buffer(const char *buffer, size_t bytes_read, double idf, double avgdl, double k1, double b) {
+// Deserializes buffer into ShardPostingList and computes BM25F scores for each posting
+void process_shard_buffer(const char *buffer, size_t bytes_read, double idf, const double avgdl[MAX_FTS_FIELDS], const double weights[MAX_FTS_FIELDS], double k1, double b) {
     if (bytes_read < sizeof(uint32_t) * 2) {
         return;
     }
@@ -28,13 +37,17 @@ void process_shard_buffer(const char *buffer, size_t bytes_read, double idf, dou
 
     for (uint32_t i = 0; i < plist->num_postings; i++) {
         const Posting *p = &plist->postings[i];
-        double score = compute_bm25_score(p->term_frequency, p->document_length, avgdl, idf, k1, b);
+        double score = compute_bm25f_score(p->term_frequencies, p->document_lengths, avgdl, weights, idf, k1, b);
 
         // Print Node UUID byte representation and computed score for PoC demonstration
         printf("    [Node UUID ");
         for (int b_idx = 0; b_idx < 16; b_idx++) {
             printf("%02x", p->node_id[b_idx]);
         }
-        printf("] TF: %u, DocLen: %u => BM25 Score: %.4f\n", p->term_frequency, p->document_length, score);
+        printf("] BM25F Score: %.4f (TF: [", score);
+        for (int f_idx = 0; f_idx < MAX_FTS_FIELDS; f_idx++) {
+            printf("%u%s", p->term_frequencies[f_idx], f_idx == MAX_FTS_FIELDS - 1 ? "" : ", ");
+        }
+        printf("])\n");
     }
 }

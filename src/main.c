@@ -7,7 +7,7 @@
 
 extern int fts_init_uv();
 extern void fts_cleanup_uv();
-extern void scatter_query_to_shards_uv(int *shard_fds, int num_shards, char **buffers, size_t read_size, double idf, double avgdl, double k1, double b);
+extern void scatter_query_to_shards_uv(int *shard_fds, int num_shards, char **buffers, size_t read_size, double idf, const double avgdl[MAX_FTS_FIELDS], const double weights[MAX_FTS_FIELDS], double k1, double b);
 extern void gather_shard_results_uv();
 
 #define NUM_SHARDS 4
@@ -15,7 +15,7 @@ extern void gather_shard_results_uv();
 
 int main() {
     printf("===================================================================\n");
-    printf("Initializing Custom C-Based Async FTS Engine PoC (libuv + BM25)\n");
+    printf("Initializing Custom C-Based Async FTS Engine PoC (libuv + BM25F)\n");
     printf("===================================================================\n");
     
     if (fts_init_uv() < 0) {
@@ -26,7 +26,8 @@ int main() {
     uint64_t total_corpus_docs = 10000;
     uint64_t term_doc_freq = 250;
     double idf = compute_idf(total_corpus_docs, term_doc_freq);
-    double avgdl = 120.0;
+    double avgdls[MAX_FTS_FIELDS] = {20.0, 50.0, 120.0, 500.0};
+    double weights[MAX_FTS_FIELDS] = {10.0, 5.0, 2.0, 1.0};
     double k1 = 1.2;
     double b = 0.75;
 
@@ -63,8 +64,10 @@ int main() {
             memset(p->node_id, 0, 16);
             p->node_id[0] = (uint8_t)(i + 1);
             p->node_id[1] = (uint8_t)(p_idx + 1);
-            p->term_frequency = (p_idx + 1) * 2 + i;
-            p->document_length = 100 + (p_idx * 30) - (i * 5);
+            for (int f_idx = 0; f_idx < MAX_FTS_FIELDS; f_idx++) {
+                p->term_frequencies[f_idx] = (p_idx + 1) * (MAX_FTS_FIELDS - f_idx) + i;
+                p->document_lengths[f_idx] = 10 + (p_idx * 10) + (f_idx * 20);
+            }
         }
 
         write(fd, binary_payload, payload_size);
@@ -84,7 +87,7 @@ int main() {
     
     // 3. Scatter-Gather Query Execution
     printf("Scattering query (Term ID: 42) across %d shards asynchronously...\n", NUM_SHARDS);
-    scatter_query_to_shards_uv(shard_fds, NUM_SHARDS, buffers, BUFFER_SIZE, idf, avgdl, k1, b);
+    scatter_query_to_shards_uv(shard_fds, NUM_SHARDS, buffers, BUFFER_SIZE, idf, avgdls, weights, k1, b);
     
     printf("Gathering results via libuv Event Loop callbacks...\n");
     gather_shard_results_uv();
@@ -99,6 +102,6 @@ int main() {
     }
     
     fts_cleanup_uv();
-    printf("\nPoC BM25 scatter-gather execution completed successfully.\n");
+    printf("\nPoC BM25F scatter-gather execution completed successfully.\n");
     return EXIT_SUCCESS;
 }
