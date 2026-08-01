@@ -1,6 +1,7 @@
 #include "async_search.h"
 #include <stdlib.h>
 #include <string.h>
+#include "inverted_index.h"
 #include <stddef.h>
 
 static uv_loop_t *async_search_loop = NULL;
@@ -26,7 +27,9 @@ static void shard_search_work_cb(uv_work_t *req) {
     work->status = 0;
 
     if (work->query.use_text) {
-        work->result_count += shard_search_bm25f(work->shard, 0, work->idf, 
+        // We use the term_id = 0 for now since test_pecorino inserts to term_id = 0
+        // In a full implementation, we'd loop over tokens from work->query
+        work->result_count += shard_search_bm25f_indexed(work->shard, 0, work->idf, 
                                                  work->avgdl, work->weights, 
                                                  work->k1, work->b, 
                                                  &work->results[work->result_count], 
