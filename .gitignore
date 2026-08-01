@@ -13,3 +13,6 @@ mock_shard_*
 tab_shard_*
 wal_bp_*
 test_phase2_3.*
+fts_shell
+custom_sqlite3
+fts_uring_data/
