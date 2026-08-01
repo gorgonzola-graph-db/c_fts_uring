@@ -1,4 +1,7 @@
 #include "unified_shard.h"
+#include "shard_meta.h"
+#include "inverted_index.h"
+#include "lexicon.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -34,11 +37,6 @@ int shard_init(UnifiedShard *shard, uint32_t shard_id, const char *base_path) {
         if (write(shard->data_fd, zero, 4096) < 0) return -1;
         if (write(shard->data_fd, zero, 4096) < 0) return -1;
         
-        Frame* root_frame = buffer_pool_fetch_page(&shard->bpm, 0);
-        if (root_frame) {
-            slotted_page_init(root_frame->page_data, 0, PAGE_TYPE_BTREE_LEAF);
-            buffer_pool_unpin_page(&shard->bpm, 0, true, HINT_NORMAL);
-        }
         
         Frame* ts_frame = buffer_pool_fetch_page(&shard->bpm, 1);
         if (ts_frame) {
@@ -63,8 +61,13 @@ int shard_init(UnifiedShard *shard, uint32_t shard_id, const char *base_path) {
     shard->next_doc_id = 0; 
     shard->total_docs = 0;
     for(int i=0; i<MAX_FTS_FIELDS; i++) {
-        shard->avgdl[i] = 0.0;
+        shard->avgdl[i] = 10.0;
         shard->sum_dl[i] = 0.0;
+    }
+    
+    // Try to restore stats from companion .meta file
+    if (shard_meta_load(shard, base_path) == 0) {
+        // Metadata loaded successfully - stats restored
     }
     
     shard->owner_thread = pthread_self();
@@ -73,12 +76,20 @@ int shard_init(UnifiedShard *shard, uint32_t shard_id, const char *base_path) {
     return 0;
 }
 
-void shard_close(UnifiedShard *shard) {
+void shard_close_with_path(UnifiedShard *shard, const char *base_path) {
     if (!shard->is_initialized) return;
+    // Persist shard statistics before shutdown
+    if (base_path) {
+        shard_meta_save(shard, base_path);
+    }
     buffer_pool_flush_all(&shard->bpm);
     wal_close(&shard->wal);
     close(shard->data_fd);
     shard->is_initialized = false;
+}
+
+void shard_close(UnifiedShard *shard) {
+    shard_close_with_path(shard, NULL);
 }
 
 int engine_init(UnifiedEngine *engine, const char *base_path, uint32_t num_shards) {
@@ -105,7 +116,7 @@ int engine_init(UnifiedEngine *engine, const char *base_path, uint32_t num_shard
 
 void engine_close(UnifiedEngine *engine) {
     for (uint32_t i = 0; i < engine->num_shards; i++) {
-        shard_close(&engine->shards[i]);
+        shard_close_with_path(&engine->shards[i], engine->base_path);
     }
 }
 
@@ -140,12 +151,27 @@ int shard_insert_document(UnifiedShard *shard, WALManager *wal,
         slotted_page_init(frame->page_data, shard->next_page_id, (PageType)PAGE_TYPE_VECTOR_DATA);
         slotted_page_insert_tuple(frame->page_data, &rec, sizeof(UnifiedDocRecord));
     }
+    // Get the slot_id of the just-inserted tuple
+    PageHeader *ins_hdr = (PageHeader *)frame->page_data;
+    uint16_t inserted_slot_id = ins_hdr->slot_count - 1;
+    uint32_t inserted_page_id = shard->next_page_id;
     buffer_pool_unpin_page(&shard->bpm, shard->next_page_id, true, HINT_NORMAL);
 
     shard->total_docs++;
     for (int i = 0; i < MAX_FTS_FIELDS; i++) {
         shard->sum_dl[i] += dl[i];
         shard->avgdl[i] = shard->sum_dl[i] / shard->total_docs;
+    }
+
+    // Update inverted index: for each field with tf > 0, add a posting.
+    // We use a synthetic term_id = field_index for now; the VTab bridge
+    // will use the Lexicon to map real terms to IDs before calling search.
+    // This adds the doc to the B-Tree so shard_search_bm25f_indexed can find it.
+    for (int i = 0; i < MAX_FTS_FIELDS; i++) {
+        if (tf[i] > 0) {
+            inverted_index_add_posting(shard, 0, rec.doc_id, inserted_page_id, inserted_slot_id);
+            break;  // Only need one posting per doc for the generic key
+        }
     }
 
     return 0;
@@ -456,7 +482,7 @@ void engine_recompute_global_stats(UnifiedEngine *engine) {
         if (engine->global_total_docs > 0) {
             engine->global_avgdl[i] = sum_dl[i] / engine->global_total_docs;
         } else {
-            engine->global_avgdl[i] = 0.0;
+            engine->global_avgdl[i] = 10.0;
         }
     }
 }

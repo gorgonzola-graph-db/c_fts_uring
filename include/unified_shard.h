@@ -101,6 +101,7 @@ void engine_close(UnifiedEngine *engine);
 // Shard lifecycle (called internally by engine_init)
 int  shard_init(UnifiedShard *shard, uint32_t shard_id, const char *base_path);
 void shard_close(UnifiedShard *shard);
+void shard_close_with_path(UnifiedShard *shard, const char *base_path);
 
 // Document ingestion (lock-free: each thread writes to its own shard)
 int shard_insert_document(UnifiedShard *shard, WALManager *wal,
