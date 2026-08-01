@@ -6,7 +6,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define BUFFER_POOL_SIZE 8
+#define BUFFER_POOL_SIZE 4096
 
 typedef struct {
     uint32_t page_id;
@@ -16,11 +16,14 @@ typedef struct {
     char page_data[PAGE_SIZE];
 } Frame;
 
+#include <liburing.h>
+
 typedef struct {
     Frame frames[BUFFER_POOL_SIZE];
     uint32_t clock_hand;
     int disk_fd;
     WALManager *wal;
+    struct io_uring ring;
 } BufferPoolManager;
 
 typedef enum {
@@ -33,6 +36,7 @@ void buffer_pool_init(BufferPoolManager *bpm, int disk_fd, WALManager *wal);
 Frame* buffer_pool_fetch_page(BufferPoolManager *bpm, uint32_t page_id);
 void buffer_pool_unpin_page(BufferPoolManager *bpm, uint32_t page_id, bool is_dirty, BufferPoolHint hint);
 int buffer_pool_flush_page(BufferPoolManager *bpm, uint32_t page_id);
+void buffer_pool_destroy(BufferPoolManager *bpm);
 void buffer_pool_flush_all(BufferPoolManager *bpm);
 
 #endif // BUFFER_POOL_H

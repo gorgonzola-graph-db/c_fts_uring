@@ -1,6 +1,6 @@
 CC = gcc
 CFLAGS = -Wall -O2 -fPIC -Iinclude
-LDFLAGS = -luv -lm -lrt
+LDFLAGS = -luv -lm -lrt -luring
 
 FTS_SRCS = src/lexicon.c src/shard_worker.c src/uv_loop.c src/main.c
 FTS_OBJS = $(FTS_SRCS:.c=.o)
