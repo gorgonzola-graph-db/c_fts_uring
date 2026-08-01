@@ -81,7 +81,7 @@ static int ftsConnect(sqlite3 *db, void *pAux, int argc, const char *const*argv,
             pNew->engine = g_engine;
             g_engine_ref_count++;
         } else {
-            pNew->engine = sqlite3_malloc( sizeof(UnifiedEngine) );
+            pNew->engine = sqlite3_malloc64( sizeof(UnifiedEngine) );
             if (!pNew->engine) {
                 sqlite3_free(pNew);
                 return SQLITE_NOMEM;

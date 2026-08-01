@@ -6,7 +6,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define BUFFER_POOL_SIZE 4096
+#define BUFFER_POOL_SIZE 93750
 
 typedef struct {
     uint32_t page_id;
