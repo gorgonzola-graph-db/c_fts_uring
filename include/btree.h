@@ -40,7 +40,7 @@ typedef struct {
 typedef struct {
     BufferPoolManager *bpm;
     uint32_t root_page_id;
-    uint32_t next_page_id;
+    uint32_t *next_page_id;  // Pointer to shared page counter (owned by shard)
 } BTree;
 
 void btree_init(BTree *tree, BufferPoolManager *bpm, uint32_t root_page_id, uint32_t *next_page_id_counter);

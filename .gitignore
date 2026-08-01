@@ -5,10 +5,7 @@
 *.dat
 *.wal
 *.db
-c_fts_poc
-c_tabular_poc
-c_wal_bp_poc
-c_phase2_3_poc
+c_*_poc
 mock_shard_*
 tab_shard_*
 wal_bp_*

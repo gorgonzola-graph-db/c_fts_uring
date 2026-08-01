@@ -16,7 +16,9 @@ P23_OBJS = $(P23_SRCS:.c=.o)
 
 TARGETS = c_fts_poc c_tabular_poc c_wal_bp_poc c_phase2_3_poc fts_uring.so fts_shell
 
-VTAB_SRCS = src/vtab_bridge.c src/unified_shard.c src/wal.c src/buffer_pool.c src/slotted_page.c src/btree.c src/fts_indexer.c src/shard_worker.c
+VTAB_SRCS = src/vtab_bridge.c src/unified_shard.c src/wal.c src/buffer_pool.c \
+            src/slotted_page.c src/btree.c src/fts_indexer.c src/shard_worker.c \
+            src/lexicon_map.c src/shard_meta.c src/async_search.c src/inverted_index.c
 VTAB_OBJS = $(VTAB_SRCS:.c=.o)
 
 all: $(TARGETS)

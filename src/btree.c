@@ -2,11 +2,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
 
 void btree_init(BTree *tree, BufferPoolManager *bpm, uint32_t root_page_id, uint32_t *next_page_id_counter) {
     tree->bpm = bpm;
     tree->root_page_id = root_page_id;
-    tree->next_page_id = next_page_id_counter ? *next_page_id_counter : root_page_id + 1;
+    tree->next_page_id = next_page_id_counter;  // Store pointer, not value
 
     // Fetch root page to verify or initialize
     Frame *f = buffer_pool_fetch_page(tree->bpm, tree->root_page_id);
@@ -74,7 +76,12 @@ static void split_leaf_node(BTree *tree, uint32_t leaf_page_id, uint32_t txn_id)
     if (!f_old) return;
 
     BTreeLeafNode *old_leaf = (BTreeLeafNode *)f_old->page_data;
-    uint32_t new_leaf_id = tree->next_page_id++;
+    uint32_t new_leaf_id = (*tree->next_page_id)++;
+
+    // Allocate disk space for the new page
+    char zero[4096] = {0};
+    lseek(tree->bpm->disk_fd, new_leaf_id * 4096, SEEK_SET);
+    write(tree->bpm->disk_fd, zero, 4096);
 
     Frame *f_new = buffer_pool_fetch_page(tree->bpm, new_leaf_id);
     if (!f_new) {
@@ -93,7 +100,7 @@ static void split_leaf_node(BTree *tree, uint32_t leaf_page_id, uint32_t txn_id)
     new_leaf->header.slot_count = move_count;
     old_leaf->header.slot_count = mid;
 
-    // Chain leaf pointers
+    // Link leaves
     new_leaf->next_leaf_id = old_leaf->next_leaf_id;
     old_leaf->next_leaf_id = new_leaf_id;
 

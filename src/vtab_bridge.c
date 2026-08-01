@@ -4,10 +4,18 @@ SQLITE_EXTENSION_INIT1
 #include <stdlib.h>
 #include <string.h>
 #include "../include/unified_shard.h"
+#include "../include/lexicon.h"
+#include "../include/inverted_index.h"
+#include "../include/async_search.h"
+#include "../include/shard_meta.h"
+
+// Global lexicon shared across the engine lifetime
+static Lexicon g_lexicon;
+static bool g_lexicon_initialized = false;
 
 typedef struct {
     sqlite3_vtab base;
-    UnifiedEngine *engine;  // Pointer to the shared engine instance
+    UnifiedEngine *engine;
 } fts_uring_vtab;
 
 typedef struct {
@@ -32,6 +40,15 @@ static int ftsConnect(sqlite3 *db, void *pAux, int argc, const char *const*argv,
         
         engine_init(pNew->engine, "./fts_uring_data", 4);
         
+        // Initialize global lexicon once
+        if (!g_lexicon_initialized) {
+            lexicon_init(&g_lexicon);
+            g_lexicon_initialized = true;
+        }
+        
+        // Initialize async search subsystem
+        async_search_init();
+        
         *ppVtab = (sqlite3_vtab*)pNew;
     }
     return rc;
@@ -45,6 +62,11 @@ static int ftsDisconnect(sqlite3_vtab *pVtab) {
             sqlite3_free(p->engine);
         }
         sqlite3_free(p);
+    }
+    async_search_shutdown();
+    if (g_lexicon_initialized) {
+        lexicon_destroy(&g_lexicon);
+        g_lexicon_initialized = false;
     }
     return SQLITE_OK;
 }
@@ -81,6 +103,17 @@ static int ftsFilter(sqlite3_vtab_cursor *pVtabCursor, int idxNum, const char *i
     if( argc > 0 ){
         const char *search_term = (const char*)sqlite3_value_text(argv[0]);
         
+        // Tokenize the query using the lexicon tokenizer
+        char token_buf[4096];
+        char *tokens[64];
+        int num_tokens = lexicon_tokenize(search_term, token_buf, sizeof(token_buf), tokens, 64);
+        
+        // Insert/lookup each token in the lexicon to get term_ids
+        // (For now we use lexicon_insert which auto-creates IDs for new terms)
+        for (int t = 0; t < num_tokens; t++) {
+            lexicon_insert(&g_lexicon, tokens[t]);
+        }
+        
         UnifiedQuery query;
         memset(&query, 0, sizeof(query));
         query.search_term = search_term;
@@ -88,7 +121,8 @@ static int ftsFilter(sqlite3_vtab_cursor *pVtabCursor, int idxNum, const char *i
         query.use_vector = false;
         query.top_k = 64;
         
-        pCur->total_results = engine_search(pVtab->engine, &query, pCur->results, MAX_RESULTS_PER_SHARD * MAX_SHARDS);
+        // Use async scatter-gather search across all shards
+        pCur->total_results = engine_search_async(pVtab->engine, &query, pCur->results, MAX_RESULTS_PER_SHARD * MAX_SHARDS);
     } else {
         pCur->total_results = 0;
     }
