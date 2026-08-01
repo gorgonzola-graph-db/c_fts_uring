@@ -13,11 +13,11 @@
 ** shared libraries that want to be imported as extensions into
 ** an SQLite instance.  Shared libraries that intend to be loaded
 ** as extensions by SQLite should #include this file instead of 
-** sqlite3.h.
+** db_engine.h.
 */
 #ifndef SQLITE3EXT_H
 #define SQLITE3EXT_H
-#include "sqlite3.h"
+#include "db_engine.h"
 
 /*
 ** The following structure holds pointers to all of the SQLite API
