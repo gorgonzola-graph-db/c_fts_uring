@@ -83,6 +83,7 @@ void shard_close_with_path(UnifiedShard *shard, const char *base_path) {
         shard_meta_save(shard, base_path);
     }
     buffer_pool_flush_all(&shard->bpm);
+    buffer_pool_destroy(&shard->bpm);
     wal_close(&shard->wal);
     close(shard->data_fd);
     shard->is_initialized = false;

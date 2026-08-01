@@ -6,8 +6,11 @@
 
 int main() {
     printf("[1] Initializing Unified Engine direct C-API...\n");
-    UnifiedEngine engine;
-    engine_init(&engine, "./fts_uring_data", 4);
+    UnifiedEngine *engine = malloc(sizeof(UnifiedEngine));
+    if (engine_init(engine, "./fts_uring_data", 1) != 0) {
+        fprintf(stderr, "Failed to init engine\n");
+        return 1;
+    }
     
     printf("[2] Simulating Pecorino inserting AST node 'DataCollector'...\n");
     uint8_t node_id[16] = {
@@ -24,9 +27,12 @@ int main() {
     embedding[0] = 0.95f; 
     
     // Insert into Shard 0 directly lock-free
-    shard_insert_document(&engine.shards[0], &engine.shards[0].wal, node_id, tf, dl, embedding);
+    if (shard_insert_document(&engine->shards[0], &engine->shards[0].wal, node_id, tf, dl, embedding) != 0) {
+        fprintf(stderr, "Failed to insert document\n");
+    }
     
     // Flush to disk
-    engine_close(&engine);
+    engine_close(engine);
+    free(engine);
     printf("[3] Data flushed to ./fts_uring_data\n\n");
 }
