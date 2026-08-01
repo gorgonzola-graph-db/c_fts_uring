@@ -7,9 +7,13 @@
 static uv_loop_t *async_search_loop = NULL;
 
 int async_search_init(void) {
-    async_search_loop = uv_default_loop();
     if (!async_search_loop) {
-        return -1;
+        async_search_loop = (uv_loop_t *)malloc(sizeof(uv_loop_t));
+        if (uv_loop_init(async_search_loop) != 0) {
+            free(async_search_loop);
+            async_search_loop = NULL;
+            return -1;
+        }
     }
     return 0;
 }
@@ -17,6 +21,7 @@ int async_search_init(void) {
 void async_search_shutdown(void) {
     if (async_search_loop) {
         uv_loop_close(async_search_loop);
+        free(async_search_loop);
         async_search_loop = NULL;
     }
 }

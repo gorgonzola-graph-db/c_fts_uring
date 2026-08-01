@@ -25,6 +25,38 @@ typedef struct {
     int current_row;
 } fts_uring_cursor;
 
+UnifiedEngine *g_engine = NULL;
+static int g_engine_ref_count = 0;
+
+// Global insert for Python bindings
+#include <ctype.h>
+int python_insert_document(const uint8_t node_id[16],
+                           const uint32_t tf[4],
+                           const uint32_t dl[4],
+                           const float embedding[384],
+                           const char *text) {
+    if (!g_engine) return -1;
+    
+    uint32_t term_ids[1024];
+    uint32_t num_terms = 0;
+    
+    if (text) {
+        char buf[4096];
+        strncpy(buf, text, sizeof(buf)-1);
+        buf[sizeof(buf)-1] = '\0';
+        
+        char *saveptr;
+        char *token = strtok_r(buf, " \t\r\n.,;:!?()[]{}<>+=-*/&|%\"'\\", &saveptr);
+        while (token && num_terms < 1024) {
+            for (char *p = token; *p; p++) *p = tolower(*p);
+            term_ids[num_terms++] = lexicon_insert(&g_lexicon, token);
+            token = strtok_r(NULL, " \t\r\n.,;:!?()[]{}<>+=-*/&|%\"'\\", &saveptr);
+        }
+    }
+    
+    return engine_insert_document(g_engine, node_id, tf, dl, embedding, term_ids, num_terms);
+}
+
 static int ftsConnect(sqlite3 *db, void *pAux, int argc, const char *const*argv, sqlite3_vtab **ppVtab, char **pzErr) {
     int rc = sqlite3_declare_vtab(db, "CREATE TABLE x(node_id TEXT, bm25f_score REAL, cosine_score REAL, rrf_score REAL, query HIDDEN)");
     if( rc==SQLITE_OK ){
@@ -32,13 +64,32 @@ static int ftsConnect(sqlite3 *db, void *pAux, int argc, const char *const*argv,
         if (!pNew) return SQLITE_NOMEM;
         memset(pNew, 0, sizeof(*pNew));
         
-        pNew->engine = sqlite3_malloc( sizeof(UnifiedEngine) );
-        if (!pNew->engine) {
-            sqlite3_free(pNew);
-            return SQLITE_NOMEM;
+        char path[256];
+        if (argc > 3) {
+            // Remove quotes if present
+            strncpy(path, argv[3], 255);
+            path[255] = '\0';
+            if (path[0] == '\'' || path[0] == '"') {
+                memmove(path, path+1, strlen(path));
+                path[strlen(path)-1] = '\0';
+            }
+        } else {
+            strcpy(path, "./fts_uring_data");
         }
-        
-        engine_init(pNew->engine, "./fts_uring_data", 4);
+
+        if (g_engine && strcmp(g_engine->base_path, path) == 0) {
+            pNew->engine = g_engine;
+            g_engine_ref_count++;
+        } else {
+            pNew->engine = sqlite3_malloc( sizeof(UnifiedEngine) );
+            if (!pNew->engine) {
+                sqlite3_free(pNew);
+                return SQLITE_NOMEM;
+            }
+            engine_init(pNew->engine, path, 4);
+            g_engine = pNew->engine;
+            g_engine_ref_count = 1;
+        }
         
         // Initialize global lexicon once
         if (!g_lexicon_initialized) {
@@ -58,15 +109,26 @@ static int ftsDisconnect(sqlite3_vtab *pVtab) {
     fts_uring_vtab *p = (fts_uring_vtab*)pVtab;
     if( p ){
         if( p->engine ){
-            engine_close(p->engine);
-            sqlite3_free(p->engine);
+            if (g_engine == p->engine) {
+                g_engine_ref_count--;
+                if (g_engine_ref_count <= 0) {
+                    engine_close(p->engine);
+                    sqlite3_free(p->engine);
+                    g_engine = NULL;
+                }
+            } else {
+                engine_close(p->engine);
+                sqlite3_free(p->engine);
+            }
         }
         sqlite3_free(p);
     }
-    async_search_shutdown();
-    if (g_lexicon_initialized) {
-        lexicon_destroy(&g_lexicon);
-        g_lexicon_initialized = false;
+    if (g_engine_ref_count <= 0) {
+        async_search_shutdown();
+        if (g_lexicon_initialized) {
+            lexicon_destroy(&g_lexicon);
+            g_lexicon_initialized = false;
+        }
     }
     return SQLITE_OK;
 }
