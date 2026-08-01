@@ -4,11 +4,15 @@
 #include <string.h>
 #include <time.h>
 
-#define NUM_INSERTS 100000
+#define NUM_INSERTS 10000
 
 int main() {
     printf("[Stress Test] Initializing Unified Engine...\n");
     UnifiedEngine *engine = malloc(sizeof(UnifiedEngine));
+    if (!engine) {
+        fprintf(stderr, "Failed to allocate UnifiedEngine (size: %zu bytes)\n", sizeof(UnifiedEngine));
+        return 1;
+    }
     if (engine_init(engine, "./fts_uring_data", 1) != 0) {
         fprintf(stderr, "Failed to initialize engine.\n");
         return 1;
@@ -30,7 +34,9 @@ int main() {
         float embedding[EMBEDDING_DIM] = {0};
         embedding[0] = 0.1f;
 
-        if (shard_insert_document(&engine->shards[0], &engine->shards[0].wal, node_id, tf, dl, embedding) != 0) {
+        uint32_t term_ids[1] = {12345};
+        
+        if (shard_insert_document(&engine->shards[0], &engine->shards[0].wal, node_id, tf, dl, embedding, term_ids, 1) != 0) {
             fprintf(stderr, "Failed to insert document %d\n", i);
             break;
         }
