@@ -218,3 +218,162 @@ int shard_search_bm25f_indexed(UnifiedShard *shard,
     
     return count;
 }
+
+int shard_search_phrase_indexed(UnifiedShard *shard,
+                                const uint32_t *term_ids,
+                                uint32_t num_terms,
+                                double idf,
+                                const double avgdl[MAX_FTS_FIELDS],
+                                const double weights[MAX_FTS_FIELDS],
+                                double k1, double b,
+                                UnifiedSearchResult *results,
+                                uint32_t max_results) {
+    if (num_terms == 0) return 0;
+    if (num_terms == 1) {
+        return shard_search_bm25f_indexed(shard, term_ids[0], idf, avgdl, weights, k1, b, results, max_results);
+    }
+    
+    uint32_t max_possible_postings = 1000000;
+    InvertedPosting **postings = malloc(num_terms * sizeof(InvertedPosting *));
+    uint32_t *num_postings = malloc(num_terms * sizeof(uint32_t));
+    if (!postings || !num_postings) {
+        if (postings) free(postings);
+        if (num_postings) free(num_postings);
+        return 0;
+    }
+    
+    for (uint32_t i = 0; i < num_terms; i++) {
+        postings[i] = malloc(sizeof(InvertedPosting) * max_possible_postings);
+        if (!postings[i]) {
+            for (uint32_t j = 0; j < i; j++) free(postings[j]);
+            free(postings);
+            free(num_postings);
+            return 0;
+        }
+        num_postings[i] = inverted_index_get_postings(shard, term_ids[i], postings[i], max_possible_postings);
+        if (num_postings[i] == 0) {
+            for (uint32_t j = 0; j <= i; j++) free(postings[j]);
+            free(postings);
+            free(num_postings);
+            return 0;
+        }
+    }
+    
+    uint32_t count = 0;
+    uint32_t *cursors = calloc(num_terms, sizeof(uint32_t));
+    if (!cursors) {
+        for (uint32_t i = 0; i < num_terms; i++) free(postings[i]);
+        free(postings);
+        free(num_postings);
+        return 0;
+    }
+    
+    while (cursors[0] < num_postings[0]) {
+        uint32_t target_doc_id = postings[0][cursors[0]].doc_id;
+        bool doc_match = true;
+        
+        for (uint32_t i = 1; i < num_terms; i++) {
+            while (cursors[i] < num_postings[i] && postings[i][cursors[i]].doc_id < target_doc_id) {
+                cursors[i]++;
+            }
+            if (cursors[i] == num_postings[i] || postings[i][cursors[i]].doc_id != target_doc_id) {
+                doc_match = false;
+                break;
+            }
+        }
+        
+        if (doc_match) {
+            bool pos_match = false;
+            InvertedPosting *post0 = &postings[0][cursors[0]];
+            
+            for (uint16_t pos_idx0 = 0; pos_idx0 < post0->pos_count; pos_idx0++) {
+                uint32_t start_pos = post0->positions[pos_idx0];
+                bool this_pos_match = true;
+                
+                for (uint32_t i = 1; i < num_terms; i++) {
+                    uint32_t target_pos = start_pos + i;
+                    bool found_pos = false;
+                    InvertedPosting *posti = &postings[i][cursors[i]];
+                    for (uint16_t pos_idxi = 0; pos_idxi < posti->pos_count; pos_idxi++) {
+                        if (posti->positions[pos_idxi] == target_pos) {
+                            found_pos = true;
+                            break;
+                        }
+                    }
+                    if (!found_pos) {
+                        this_pos_match = false;
+                        break;
+                    }
+                }
+                if (this_pos_match) {
+                    pos_match = true;
+                    break;
+                }
+            }
+            
+            if (pos_match) {
+                uint32_t data_page_id = post0->data_page_id;
+                uint16_t data_slot_id = post0->data_slot_id;
+                
+                Frame *frame = buffer_pool_fetch_page(&shard->bpm, data_page_id);
+                if (frame) {
+                    uint16_t len;
+                    const char *tup = slotted_page_get_tuple(frame->page_data, data_slot_id, &len);
+                    if (tup && len == sizeof(UnifiedDocRecord)) {
+                        UnifiedDocRecord *rec = (UnifiedDocRecord*)tup;
+                        if (!shard_is_deleted(shard, rec->doc_id)) {
+                            double score = compute_bm25f_score(rec->term_frequencies, rec->document_lengths, avgdl, weights, idf, k1, b);
+                            if (score > 0) {
+                                if (count < max_results) {
+                                    memcpy(results[count].node_id, rec->node_id, 16);
+                                    results[count].bm25f_score = score;
+                                    results[count].cosine_score = 0.0;
+                                    results[count].rrf_score = 0.0;
+                                    results[count].bm25f_rank = 0;
+                                    results[count].cosine_rank = 0;
+                                    count++;
+                                } else {
+                                    uint32_t min_idx = 0;
+                                    double min_score = results[0].bm25f_score;
+                                    for (uint32_t r = 1; r < count; r++) {
+                                        if (results[r].bm25f_score < min_score) {
+                                            min_score = results[r].bm25f_score;
+                                            min_idx = r;
+                                        }
+                                    }
+                                    if (score > min_score) {
+                                        memcpy(results[min_idx].node_id, rec->node_id, 16);
+                                        results[min_idx].bm25f_score = score;
+                                        results[min_idx].cosine_score = 0.0;
+                                        results[min_idx].rrf_score = 0.0;
+                                        results[min_idx].bm25f_rank = 0;
+                                        results[min_idx].cosine_rank = 0;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    buffer_pool_unpin_page(&shard->bpm, data_page_id, false, HINT_NORMAL);
+                }
+            }
+        }
+        cursors[0]++;
+    }
+    
+    for (uint32_t i = 0; i < num_terms; i++) free(postings[i]);
+    free(postings);
+    free(num_postings);
+    free(cursors);
+    
+    for (uint32_t i = 0; i < count; i++) {
+        for (uint32_t j = i + 1; j < count; j++) {
+            if (results[j].bm25f_score > results[i].bm25f_score) {
+                UnifiedSearchResult tmp = results[i];
+                results[i] = results[j];
+                results[j] = tmp;
+            }
+        }
+    }
+    
+    return count;
+}

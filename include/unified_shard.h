@@ -86,6 +86,9 @@ typedef struct {
 // Query parameters for a unified search
 typedef struct {
     const char *search_term;               // Text query
+    uint32_t    term_ids[64];              // Extracted term IDs
+    uint32_t    num_terms;                 // Number of terms
+    bool        is_phrase;                 // Phrase query flag
     float       query_embedding[EMBEDDING_DIM]; // Query vector
     bool        use_text;                  // Enable BM25F
     bool        use_vector;                // Enable cosine similarity
