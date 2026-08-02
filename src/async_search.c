@@ -26,25 +26,86 @@ void async_search_shutdown(void) {
     }
 }
 
+static int merge_rrf(UnifiedSearchResult *bm25, uint32_t bm25_count,
+                     UnifiedSearchResult *vec, uint32_t vec_count,
+                     UnifiedSearchResult *out, uint32_t max_out) {
+    UnifiedSearchResult merged[MAX_RESULTS_PER_SHARD * 2];
+    uint32_t merged_count = 0;
+    
+    for (uint32_t i = 0; i < bm25_count; i++) {
+        merged[merged_count] = bm25[i];
+        merged[merged_count].bm25f_rank = i + 1;
+        merged[merged_count].rrf_score = 1.0 / (RRF_K + i + 1);
+        merged_count++;
+    }
+    
+    for (uint32_t i = 0; i < vec_count; i++) {
+        bool found = false;
+        for (uint32_t j = 0; j < merged_count; j++) {
+            if (memcmp(merged[j].node_id, vec[i].node_id, 16) == 0) {
+                merged[j].cosine_score = vec[i].cosine_score;
+                merged[j].cosine_rank = i + 1;
+                merged[j].rrf_score += 1.0 / (RRF_K + i + 1);
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            merged[merged_count] = vec[i];
+            merged[merged_count].cosine_rank = i + 1;
+            merged[merged_count].rrf_score = 1.0 / (RRF_K + i + 1);
+            merged_count++;
+        }
+    }
+    
+    for (uint32_t i = 0; i < merged_count; i++) {
+        for (uint32_t j = i + 1; j < merged_count; j++) {
+            if (merged[j].rrf_score > merged[i].rrf_score) {
+                UnifiedSearchResult tmp = merged[i];
+                merged[i] = merged[j];
+                merged[j] = tmp;
+            }
+        }
+    }
+    
+    uint32_t out_count = merged_count > max_out ? max_out : merged_count;
+    memcpy(out, merged, sizeof(UnifiedSearchResult) * out_count);
+    return out_count;
+}
+
 static void shard_search_work_cb(uv_work_t *req) {
     ShardSearchWork *work = (ShardSearchWork *)req->data;
     work->result_count = 0;
     work->status = 0;
 
+    UnifiedSearchResult bm25_results[MAX_RESULTS_PER_SHARD];
+    uint32_t bm25_count = 0;
+    
+    UnifiedSearchResult vec_results[MAX_RESULTS_PER_SHARD];
+    uint32_t vec_count = 0;
+
     if (work->query.use_text) {
-        // We use the term_id = 0 for now since test_pecorino inserts to term_id = 0
-        // In a full implementation, we'd loop over tokens from work->query
-        work->result_count += shard_search_bm25f_indexed(work->shard, 0, work->idf, 
+        bm25_count = shard_search_bm25f_indexed(work->shard, 0, work->idf, 
                                                  work->avgdl, work->weights, 
                                                  work->k1, work->b, 
-                                                 &work->results[work->result_count], 
-                                                 MAX_RESULTS_PER_SHARD - work->result_count);
+                                                 bm25_results, 
+                                                 MAX_RESULTS_PER_SHARD);
     }
 
-    if (work->query.use_vector && work->result_count < MAX_RESULTS_PER_SHARD) {
-        work->result_count += shard_search_vector(work->shard, work->query.query_embedding,
-                                                  &work->results[work->result_count],
-                                                  MAX_RESULTS_PER_SHARD - work->result_count);
+    if (work->query.use_vector) {
+        vec_count = shard_search_vector(work->shard, work->query.query_embedding,
+                                        vec_results,
+                                        MAX_RESULTS_PER_SHARD);
+    }
+    
+    if (work->query.use_text && work->query.use_vector) {
+        work->result_count = merge_rrf(bm25_results, bm25_count, vec_results, vec_count, work->results, MAX_RESULTS_PER_SHARD);
+    } else if (work->query.use_text) {
+        memcpy(work->results, bm25_results, sizeof(UnifiedSearchResult) * bm25_count);
+        work->result_count = bm25_count;
+    } else {
+        memcpy(work->results, vec_results, sizeof(UnifiedSearchResult) * vec_count);
+        work->result_count = vec_count;
     }
 }
 

@@ -4,13 +4,20 @@
 #include <string.h>
 #include <unistd.h>
 
-void buffer_pool_init(BufferPoolManager *bpm, int disk_fd, WALManager *wal) {
+void buffer_pool_init(BufferPoolManager *bpm, int disk_fd, WALManager *wal, uint32_t pool_size) {
     memset(bpm, 0, sizeof(BufferPoolManager));
     bpm->disk_fd = disk_fd;
     bpm->wal = wal;
     bpm->clock_hand = 0;
+    bpm->pool_size = pool_size;
+    
+    bpm->frames = malloc(sizeof(Frame) * pool_size);
+    if (!bpm->frames) {
+        fprintf(stderr, "Failed to allocate buffer pool frames (size: %u)\n", pool_size);
+        exit(1);
+    }
 
-    for (int i = 0; i < BUFFER_POOL_SIZE; i++) {
+    for (uint32_t i = 0; i < pool_size; i++) {
         bpm->frames[i].page_id = (uint32_t)-1; // Invalid page_id
     }
     
@@ -21,11 +28,15 @@ void buffer_pool_init(BufferPoolManager *bpm, int disk_fd, WALManager *wal) {
 }
 
 void buffer_pool_destroy(BufferPoolManager *bpm) {
+    if (bpm->frames) {
+        free(bpm->frames);
+        bpm->frames = NULL;
+    }
     io_uring_queue_exit(&bpm->ring);
 }
 
 int buffer_pool_flush_page(BufferPoolManager *bpm, uint32_t page_id) {
-    for (int i = 0; i < BUFFER_POOL_SIZE; i++) {
+    for (uint32_t i = 0; i < bpm->pool_size; i++) {
         Frame *f = &bpm->frames[i];
         if (f->page_id == page_id) {
             if (f->is_dirty && bpm->disk_fd >= 0) {
@@ -61,10 +72,10 @@ int buffer_pool_flush_page(BufferPoolManager *bpm, uint32_t page_id) {
 }
 
 static int find_victim_frame(BufferPoolManager *bpm) {
-    for (int attempts = 0; attempts < BUFFER_POOL_SIZE * 2; attempts++) {
+    for (uint32_t attempts = 0; attempts < bpm->pool_size * 2; attempts++) {
         Frame *f = &bpm->frames[bpm->clock_hand];
         uint32_t current_idx = bpm->clock_hand;
-        bpm->clock_hand = (bpm->clock_hand + 1) % BUFFER_POOL_SIZE;
+        bpm->clock_hand = (bpm->clock_hand + 1) % bpm->pool_size;
 
         if (f->page_id == (uint32_t)-1 || f->pin_count == 0) {
             if (f->is_dirty) {
@@ -78,7 +89,7 @@ static int find_victim_frame(BufferPoolManager *bpm) {
 
 Frame* buffer_pool_fetch_page(BufferPoolManager *bpm, uint32_t page_id) {
     // 1. Check if page is already cached in pool
-    for (int i = 0; i < BUFFER_POOL_SIZE; i++) {
+    for (uint32_t i = 0; i < bpm->pool_size; i++) {
         if (bpm->frames[i].page_id == page_id) {
             bpm->frames[i].pin_count++;
             return &bpm->frames[i];
@@ -128,7 +139,7 @@ Frame* buffer_pool_fetch_page(BufferPoolManager *bpm, uint32_t page_id) {
 }
 
 void buffer_pool_unpin_page(BufferPoolManager *bpm, uint32_t page_id, bool is_dirty, BufferPoolHint hint) {
-    for (int i = 0; i < BUFFER_POOL_SIZE; i++) {
+    for (uint32_t i = 0; i < bpm->pool_size; i++) {
         if (bpm->frames[i].page_id == page_id) {
             if (bpm->frames[i].pin_count > 0) {
                 bpm->frames[i].pin_count--;
@@ -151,7 +162,7 @@ void buffer_pool_flush_all(BufferPoolManager *bpm) {
     
     // First, ensure WAL is flushed if we have any dirty pages
     bool any_dirty = false;
-    for (int i = 0; i < BUFFER_POOL_SIZE; i++) {
+    for (uint32_t i = 0; i < bpm->pool_size; i++) {
         if (bpm->frames[i].page_id != (uint32_t)-1 && bpm->frames[i].is_dirty) {
             any_dirty = true;
             break;
@@ -163,7 +174,7 @@ void buffer_pool_flush_all(BufferPoolManager *bpm) {
     }
 
     // Submit all writes at once using io_uring
-    for (int i = 0; i < BUFFER_POOL_SIZE; i++) {
+    for (uint32_t i = 0; i < bpm->pool_size; i++) {
         Frame *f = &bpm->frames[i];
         if (f->page_id != (uint32_t)-1 && f->is_dirty && bpm->disk_fd >= 0) {
             off_t offset = (off_t)f->page_id * PAGE_SIZE;

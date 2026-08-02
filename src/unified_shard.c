@@ -12,7 +12,7 @@
 
 extern double compute_bm25f_score(const uint32_t tf[MAX_FTS_FIELDS], const uint32_t doc_len[MAX_FTS_FIELDS], const double avgdl[MAX_FTS_FIELDS], const double weights[MAX_FTS_FIELDS], double idf, double k1, double b);
 
-int shard_init(UnifiedShard *shard, uint32_t shard_id, const char *base_path) {
+int shard_init(UnifiedShard *shard, uint32_t shard_id, const char *base_path, uint32_t pool_size) {
     shard->shard_id = shard_id;
     char data_path[512], wal_path[512];
     snprintf(data_path, sizeof(data_path), "%s/shard_%u.dat", base_path, shard_id);
@@ -26,7 +26,7 @@ int shard_init(UnifiedShard *shard, uint32_t shard_id, const char *base_path) {
         return -1;
     }
 
-    buffer_pool_init(&shard->bpm, shard->data_fd, &shard->wal);
+    buffer_pool_init(&shard->bpm, shard->data_fd, &shard->wal, pool_size);
 
     struct stat st;
     fstat(shard->data_fd, &st);
@@ -93,13 +93,19 @@ void shard_close(UnifiedShard *shard) {
     shard_close_with_path(shard, NULL);
 }
 
-int engine_init(UnifiedEngine *engine, const char *base_path, uint32_t num_shards) {
+int engine_init(UnifiedEngine *engine, const char *base_path, uint32_t num_shards, uint32_t max_ram_mb) {
     mkdir(base_path, 0755);
     strncpy(engine->base_path, base_path, sizeof(engine->base_path)-1);
     engine->base_path[sizeof(engine->base_path)-1] = '\0';
     engine->num_shards = num_shards;
+    
+    uint64_t max_ram_bytes = (uint64_t)max_ram_mb * 1024 * 1024;
+    uint32_t total_frames = max_ram_bytes / sizeof(Frame);
+    uint32_t frames_per_shard = total_frames / num_shards;
+    if (frames_per_shard < 1024) frames_per_shard = 1024; // minimum 1024 frames per shard
+
     for (uint32_t i = 0; i < num_shards; i++) {
-        if (shard_init(&engine->shards[i], i, base_path) != 0) {
+        if (shard_init(&engine->shards[i], i, base_path, frames_per_shard) != 0) {
             return -1;
         }
     }
