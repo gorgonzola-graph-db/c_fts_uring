@@ -21,9 +21,9 @@ void buffer_pool_init(BufferPoolManager *bpm, int disk_fd, WALManager *wal, uint
         bpm->frames[i].page_id = (uint32_t)-1; // Invalid page_id
     }
     
-    // Initialize io_uring with a queue size of 32
-    if (io_uring_queue_init(32, &bpm->ring, 0) < 0) {
-        fprintf(stderr, "Failed to initialize io_uring in BufferPoolManager\n");
+    // Initialize VFS with a queue size of 32
+    if (fts_vfs_init(&bpm->vfs_ctx, 32) < 0) {
+        fprintf(stderr, "Failed to initialize VFS in BufferPoolManager\n");
     }
 }
 
@@ -32,7 +32,7 @@ void buffer_pool_destroy(BufferPoolManager *bpm) {
         free(bpm->frames);
         bpm->frames = NULL;
     }
-    io_uring_queue_exit(&bpm->ring);
+    fts_vfs_destroy(&bpm->vfs_ctx);
 }
 
 int buffer_pool_flush_page(BufferPoolManager *bpm, uint32_t page_id) {
@@ -47,21 +47,11 @@ int buffer_pool_flush_page(BufferPoolManager *bpm, uint32_t page_id) {
                 
                 off_t offset = (off_t)page_id * PAGE_SIZE;
                 
-                // Use io_uring for synchronous write (submit and wait)
-                struct io_uring_sqe *sqe = io_uring_get_sqe(&bpm->ring);
-                if (!sqe) return -1;
-                
-                io_uring_prep_write(sqe, bpm->disk_fd, f->page_data, PAGE_SIZE, offset);
-                io_uring_submit(&bpm->ring);
-                
-                struct io_uring_cqe *cqe;
-                io_uring_wait_cqe(&bpm->ring, &cqe);
-                
-                if (cqe->res < 0) {
-                    io_uring_cqe_seen(&bpm->ring, cqe);
+                // Use VFS for synchronous write
+                ssize_t res = fts_vfs_write_sync(&bpm->vfs_ctx, bpm->disk_fd, f->page_data, PAGE_SIZE, offset);
+                if (res < 0) {
                     return -1;
                 }
-                io_uring_cqe_seen(&bpm->ring, cqe);
                 
                 f->is_dirty = false;
             }
@@ -113,20 +103,7 @@ Frame* buffer_pool_fetch_page(BufferPoolManager *bpm, uint32_t page_id) {
     if (bpm->disk_fd >= 0) {
         off_t offset = (off_t)page_id * PAGE_SIZE;
         
-        struct io_uring_sqe *sqe = io_uring_get_sqe(&bpm->ring);
-        if (!sqe) {
-            slotted_page_init(f->page_data, page_id, PAGE_TYPE_ROW);
-            return f;
-        }
-        
-        io_uring_prep_read(sqe, bpm->disk_fd, f->page_data, PAGE_SIZE, offset);
-        io_uring_submit(&bpm->ring);
-        
-        struct io_uring_cqe *cqe;
-        io_uring_wait_cqe(&bpm->ring, &cqe);
-        
-        ssize_t bytes_read = cqe->res;
-        io_uring_cqe_seen(&bpm->ring, cqe);
+        ssize_t bytes_read = fts_vfs_read_sync(&bpm->vfs_ctx, bpm->disk_fd, f->page_data, PAGE_SIZE, offset);
         
         if (bytes_read < PAGE_SIZE) {
             slotted_page_init(f->page_data, page_id, PAGE_TYPE_ROW);
@@ -173,34 +150,27 @@ void buffer_pool_flush_all(BufferPoolManager *bpm) {
         wal_flush(bpm->wal);
     }
 
-    // Submit all writes at once using io_uring
+    // Submit all writes at once using VFS
+    fts_vfs_batch_begin(&bpm->vfs_ctx);
     for (uint32_t i = 0; i < bpm->pool_size; i++) {
         Frame *f = &bpm->frames[i];
         if (f->page_id != (uint32_t)-1 && f->is_dirty && bpm->disk_fd >= 0) {
             off_t offset = (off_t)f->page_id * PAGE_SIZE;
-            struct io_uring_sqe *sqe = io_uring_get_sqe(&bpm->ring);
-            if (sqe) {
-                io_uring_prep_write(sqe, bpm->disk_fd, f->page_data, PAGE_SIZE, offset);
-                // Tag the request so we can identify it if needed
-                io_uring_sqe_set_data(sqe, f);
+            if (fts_vfs_batch_add_write(&bpm->vfs_ctx, bpm->disk_fd, f->page_data, PAGE_SIZE, offset, f) == 0) {
                 submitted++;
             }
         }
     }
     
     if (submitted > 0) {
-        io_uring_submit(&bpm->ring);
+        void *completed_data[1024];
+        int completed = fts_vfs_batch_submit_and_wait(&bpm->vfs_ctx, completed_data, 1024);
         
-        // Wait for all submitted writes to complete
-        for (int i = 0; i < submitted; i++) {
-            struct io_uring_cqe *cqe;
-            io_uring_wait_cqe(&bpm->ring, &cqe);
-            
-            Frame *f = (Frame *)io_uring_cqe_get_data(cqe);
-            if (f && cqe->res >= 0) {
+        for (int i = 0; i < completed; i++) {
+            Frame *f = (Frame *)completed_data[i];
+            if (f) {
                 f->is_dirty = false;
             }
-            io_uring_cqe_seen(&bpm->ring, cqe);
         }
     }
 }

@@ -47,8 +47,7 @@ int inverted_index_add_posting(UnifiedShard *shard,
         } else {
             uint32_t new_page_id = shard->next_page_id++;
             char zero[4096] = {0};
-            lseek(shard->data_fd, new_page_id * 4096, SEEK_SET);
-            if (write(shard->data_fd, zero, 4096) < 0) {
+            if (fts_vfs_write_sync(&shard->bpm.vfs_ctx, shard->data_fd, zero, 4096, new_page_id * 4096) < 0) {
                 buffer_pool_unpin_page(&shard->bpm, posting_page_id, false, HINT_NORMAL);
                 return -1;
             }
@@ -80,8 +79,7 @@ int inverted_index_add_posting(UnifiedShard *shard,
     } else {
         uint32_t new_page_id = shard->next_page_id++;
         char zero[4096] = {0};
-        lseek(shard->data_fd, new_page_id * 4096, SEEK_SET);
-        if (write(shard->data_fd, zero, 4096) < 0) return -1;
+        if (fts_vfs_write_sync(&shard->bpm.vfs_ctx, shard->data_fd, zero, 4096, new_page_id * 4096) < 0) return -1;
         
         Frame *f = buffer_pool_fetch_page(&shard->bpm, new_page_id);
         if (!f) return -1;
