@@ -5,15 +5,18 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define MAX_POSTINGS_PER_PAGE 128
+#define MAX_POSTINGS_PER_PAGE 92
+#define MAX_POSITIONS_PER_POSTING 8
 
 // A posting entry stored in inverted index pages
-// Maps (term_id) -> list of (doc_id, page_id, slot_id) tuples
+// Maps (term_id) -> list of (doc_id, page_id, slot_id, positions) tuples
 #pragma pack(push, 1)
 typedef struct {
     uint32_t doc_id;
     uint32_t data_page_id;   // Page where the UnifiedDocRecord lives
     uint16_t data_slot_id;   // Slot within that page
+    uint16_t pos_count;      // Number of positional occurrences
+    uint32_t positions[MAX_POSITIONS_PER_POSTING];
 } InvertedPosting;
 #pragma pack(pop)
 
@@ -34,7 +37,8 @@ int inverted_index_add_posting(UnifiedShard *shard,
                                uint32_t term_id,
                                uint32_t doc_id,
                                uint32_t data_page_id,
-                               uint16_t data_slot_id);
+                               uint16_t data_slot_id,
+                               uint32_t term_position);
 
 // Retrieve all postings for a given term_id.
 // Returns the number of postings found.

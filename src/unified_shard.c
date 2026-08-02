@@ -174,11 +174,11 @@ int shard_insert_document(UnifiedShard *shard, WALManager *wal,
 
     // Add postings for provided terms
     for (uint32_t i = 0; i < num_terms; i++) {
-        inverted_index_add_posting(shard, term_ids[i], rec.doc_id, inserted_page_id, inserted_slot_id);
+        inverted_index_add_posting(shard, term_ids[i], rec.doc_id, inserted_page_id, inserted_slot_id, i);
     }
     
     // Also always add to term 0 so old generic queries work if needed
-    inverted_index_add_posting(shard, 0, rec.doc_id, inserted_page_id, inserted_slot_id);
+    inverted_index_add_posting(shard, 0, rec.doc_id, inserted_page_id, inserted_slot_id, 0);
 
     return 0;
 }
