@@ -49,10 +49,8 @@ ssize_t fts_vfs_write_sync(fts_vfs_context_t *ctx, int fd, const void *buf, size
     return res;
 }
 
-static int submitted_count = 0;
-
 void fts_vfs_batch_begin(fts_vfs_context_t *ctx) {
-    submitted_count = 0;
+    ctx->submitted_count = 0;
 }
 
 int fts_vfs_batch_add_write(fts_vfs_context_t *ctx, int fd, const void *buf, size_t count, off_t offset, void *user_data) {
@@ -60,17 +58,17 @@ int fts_vfs_batch_add_write(fts_vfs_context_t *ctx, int fd, const void *buf, siz
     if (!sqe) return -1;
     io_uring_prep_write(sqe, fd, buf, count, offset);
     io_uring_sqe_set_data(sqe, user_data);
-    submitted_count++;
+    ctx->submitted_count++;
     return 0;
 }
 
 int fts_vfs_batch_submit_and_wait(fts_vfs_context_t *ctx, void **completed_user_data, int max_events) {
-    if (submitted_count == 0) return 0;
+    if (ctx->submitted_count == 0) return 0;
     
     io_uring_submit(&ctx->ring);
     
     int completed = 0;
-    for (int i = 0; i < submitted_count; i++) {
+    for (int i = 0; i < ctx->submitted_count; i++) {
         struct io_uring_cqe *cqe;
         io_uring_wait_cqe(&ctx->ring, &cqe);
         
@@ -84,10 +82,6 @@ int fts_vfs_batch_submit_and_wait(fts_vfs_context_t *ctx, void **completed_user_
 
 #else
 // Fallback Backend using pread/pwrite
-#define MAX_BATCH_EVENTS 1024
-static void* batch_user_data[MAX_BATCH_EVENTS];
-static int batch_results[MAX_BATCH_EVENTS];
-static int batch_count = 0;
 
 int fts_vfs_init(fts_vfs_context_t *ctx, uint32_t queue_size) {
     ctx->initialized = true;
@@ -107,24 +101,24 @@ ssize_t fts_vfs_write_sync(fts_vfs_context_t *ctx, int fd, const void *buf, size
 }
 
 void fts_vfs_batch_begin(fts_vfs_context_t *ctx) {
-    batch_count = 0;
+    ctx->batch_count = 0;
 }
 
 int fts_vfs_batch_add_write(fts_vfs_context_t *ctx, int fd, const void *buf, size_t count, off_t offset, void *user_data) {
     ssize_t res = pwrite(fd, buf, count, offset);
-    if (batch_count < MAX_BATCH_EVENTS) {
-        batch_user_data[batch_count] = user_data;
-        batch_results[batch_count] = (res >= 0) ? 0 : -1;
-        batch_count++;
+    if (ctx->batch_count < MAX_BATCH_EVENTS) {
+        ctx->batch_user_data[ctx->batch_count] = user_data;
+        ctx->batch_results[ctx->batch_count] = (res >= 0) ? 0 : -1;
+        ctx->batch_count++;
     }
     return (res >= 0) ? 0 : -1;
 }
 
 int fts_vfs_batch_submit_and_wait(fts_vfs_context_t *ctx, void **completed_user_data, int max_events) {
     int completed = 0;
-    for (int i = 0; i < batch_count; i++) {
-        if (batch_results[i] >= 0 && completed < max_events) {
-            completed_user_data[completed++] = batch_user_data[i];
+    for (int i = 0; i < ctx->batch_count; i++) {
+        if (ctx->batch_results[i] >= 0 && completed < max_events) {
+            completed_user_data[completed++] = ctx->batch_user_data[i];
         }
     }
     return completed;
