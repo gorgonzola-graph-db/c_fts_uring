@@ -26,8 +26,8 @@ int main() {
     float embedding[EMBEDDING_DIM] = {0.0};
     embedding[0] = 0.95f; 
     
-    // Insert into Shard 0 directly lock-free
-    if (shard_insert_document(&engine->shards[0], &engine->shards[0].wal, node_id, tf, dl, embedding) != 0) {
+    // Insert into Shard 0 directly lock-free    uint32_t term_ids[1] = {1};
+    if (shard_insert_document(&engine->shards[0], &engine->shards[0].wal, node_id, tf, dl, embedding, term_ids, 1) != 0) {
         fprintf(stderr, "Failed to insert document\n");
     }
     
