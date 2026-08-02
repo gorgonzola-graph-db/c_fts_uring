@@ -57,6 +57,7 @@ typedef struct {
     
     // Page allocation
     uint32_t          next_page_id;
+    uint32_t          active_data_page_id;
     uint32_t          next_doc_id;
     
     // Tombstone tracking

@@ -49,11 +49,12 @@ int shard_init(UnifiedShard *shard, uint32_t shard_id, const char *base_path, ui
             slotted_page_init(data_frame->page_data, 2, (PageType)PAGE_TYPE_VECTOR_DATA);
             buffer_pool_unpin_page(&shard->bpm, 2, true, HINT_NORMAL);
         }
-        
-        shard->next_page_id = 2;
+        shard->active_data_page_id = 2;
+        shard->next_page_id = 3;
     } else {
-        shard->next_page_id = (st.st_size / 4096) - 1;
-        if (shard->next_page_id < 2) shard->next_page_id = 2;
+        shard->next_page_id = (st.st_size / 4096);
+        if (shard->next_page_id < 3) shard->next_page_id = 3;
+        shard->active_data_page_id = 2;
     }
     
     btree_init(&shard->btree, &shard->bpm, 0, &shard->next_page_id);
@@ -68,6 +69,21 @@ int shard_init(UnifiedShard *shard, uint32_t shard_id, const char *base_path, ui
     // Try to restore stats from companion .meta file
     if (shard_meta_load(shard, base_path) == 0) {
         // Metadata loaded successfully - stats restored
+    }
+    
+    if (st.st_size > 0) {
+        for (uint32_t pid = shard->next_page_id - 1; pid >= 2; pid--) {
+            Frame *frame = buffer_pool_fetch_page(&shard->bpm, pid);
+            if (frame) {
+                PageHeader *hdr = (PageHeader*)frame->page_data;
+                if (hdr->page_type == PAGE_TYPE_VECTOR_DATA) {
+                    shard->active_data_page_id = pid;
+                    buffer_pool_unpin_page(&shard->bpm, pid, false, HINT_NORMAL);
+                    break;
+                }
+                buffer_pool_unpin_page(&shard->bpm, pid, false, HINT_NORMAL);
+            }
+        }
     }
     
     shard->owner_thread = pthread_self();
@@ -141,30 +157,32 @@ int shard_insert_document(UnifiedShard *shard, WALManager *wal,
     memcpy(rec.embedding, embedding, sizeof(float) * EMBEDDING_DIM);
     rec.doc_id = shard->next_doc_id++;
 
-    wal_append_record(wal, 0, WAL_REC_INSERT, shard->next_page_id, 0, &rec, sizeof(UnifiedDocRecord));
+    wal_append_record(wal, 0, WAL_REC_INSERT, shard->active_data_page_id, 0, &rec, sizeof(UnifiedDocRecord));
 
-    Frame *frame = buffer_pool_fetch_page(&shard->bpm, shard->next_page_id);
+    Frame *frame = buffer_pool_fetch_page(&shard->bpm, shard->active_data_page_id);
     if (!frame) return -1;
     if (!slotted_page_insert_tuple(frame->page_data, &rec, sizeof(UnifiedDocRecord))) {
-        buffer_pool_unpin_page(&shard->bpm, shard->next_page_id, false, HINT_NORMAL);
-        shard->next_page_id++;
+        buffer_pool_unpin_page(&shard->bpm, shard->active_data_page_id, false, HINT_NORMAL);
+        
+        uint32_t new_page_id = shard->next_page_id++;
+        shard->active_data_page_id = new_page_id;
         
         char zero[4096] = {0};
-        lseek(shard->data_fd, shard->next_page_id * 4096, SEEK_SET);
+        lseek(shard->data_fd, new_page_id * 4096, SEEK_SET);
         if (write(shard->data_fd, zero, 4096) < 0) {
             return -1;
         }
 
-        frame = buffer_pool_fetch_page(&shard->bpm, shard->next_page_id);
+        frame = buffer_pool_fetch_page(&shard->bpm, new_page_id);
         if (!frame) return -1;
-        slotted_page_init(frame->page_data, shard->next_page_id, (PageType)PAGE_TYPE_VECTOR_DATA);
+        slotted_page_init(frame->page_data, new_page_id, (PageType)PAGE_TYPE_VECTOR_DATA);
         slotted_page_insert_tuple(frame->page_data, &rec, sizeof(UnifiedDocRecord));
     }
     // Get the slot_id of the just-inserted tuple
     PageHeader *ins_hdr = (PageHeader *)frame->page_data;
     uint16_t inserted_slot_id = ins_hdr->slot_count - 1;
-    uint32_t inserted_page_id = shard->next_page_id;
-    buffer_pool_unpin_page(&shard->bpm, shard->next_page_id, true, HINT_NORMAL);
+    uint32_t inserted_page_id = shard->active_data_page_id;
+    buffer_pool_unpin_page(&shard->bpm, shard->active_data_page_id, true, HINT_NORMAL);
 
     shard->total_docs++;
     for (int i = 0; i < MAX_FTS_FIELDS; i++) {
