@@ -85,11 +85,21 @@ static void shard_search_work_cb(uv_work_t *req) {
     uint32_t vec_count = 0;
 
     if (work->query.use_text) {
-        bm25_count = shard_search_bm25f_indexed(work->shard, 0, work->idf, 
-                                                 work->avgdl, work->weights, 
-                                                 work->k1, work->b, 
-                                                 bm25_results, 
-                                                 MAX_RESULTS_PER_SHARD);
+        if (work->query.is_phrase && work->query.num_terms > 0) {
+            bm25_count = shard_search_phrase_indexed(work->shard, work->query.term_ids, work->query.num_terms, work->idf, work->avgdl, work->weights, work->k1, work->b, bm25_results, MAX_RESULTS_PER_SHARD);
+        } else if (work->query.num_terms > 0) {
+            bm25_count = shard_search_bm25f_indexed(work->shard, work->query.term_ids[0], work->idf, 
+                                                     work->avgdl, work->weights, 
+                                                     work->k1, work->b, 
+                                                     bm25_results, 
+                                                     MAX_RESULTS_PER_SHARD);
+        } else {
+            bm25_count = shard_search_bm25f_indexed(work->shard, 0, work->idf, 
+                                                     work->avgdl, work->weights, 
+                                                     work->k1, work->b, 
+                                                     bm25_results, 
+                                                     MAX_RESULTS_PER_SHARD);
+        }
     }
 
     if (work->query.use_vector) {

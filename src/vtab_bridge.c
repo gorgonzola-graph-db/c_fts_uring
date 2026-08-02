@@ -173,20 +173,35 @@ static int ftsFilter(sqlite3_vtab_cursor *pVtabCursor, int idxNum, const char *i
     if( argc > 0 ){
         const char *search_term = (const char*)sqlite3_value_text(argv[0]);
         
+        bool is_phrase = false;
+        if (search_term && search_term[0] == '"') {
+            size_t len = strlen(search_term);
+            if (len > 1 && search_term[len-1] == '"') {
+                is_phrase = true;
+            }
+        }
+        
         // Tokenize the query using the lexicon tokenizer
         char token_buf[4096];
         char *tokens[64];
         int num_tokens = lexicon_tokenize(search_term, token_buf, sizeof(token_buf), tokens, 64);
         
+        uint32_t term_ids[64];
+        
         // Insert/lookup each token in the lexicon to get term_ids
         // (For now we use lexicon_insert which auto-creates IDs for new terms)
         for (int t = 0; t < num_tokens; t++) {
-            lexicon_insert(&g_lexicon, tokens[t]);
+            term_ids[t] = lexicon_insert(&g_lexicon, tokens[t]);
         }
         
         UnifiedQuery query;
         memset(&query, 0, sizeof(query));
         query.search_term = search_term;
+        for (int t = 0; t < num_tokens; t++) {
+            query.term_ids[t] = term_ids[t];
+        }
+        query.num_terms = num_tokens;
+        query.is_phrase = is_phrase;
         query.use_text = true;
         query.use_vector = false;
         query.top_k = 64;

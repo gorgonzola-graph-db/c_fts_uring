@@ -59,4 +59,14 @@ int shard_search_bm25f_indexed(UnifiedShard *shard,
                                 UnifiedSearchResult *results,
                                 uint32_t max_results);
 
+int shard_search_phrase_indexed(UnifiedShard *shard,
+                                const uint32_t *term_ids,
+                                uint32_t num_terms,
+                                double idf,
+                                const double avgdl[MAX_FTS_FIELDS],
+                                const double weights[MAX_FTS_FIELDS],
+                                double k1, double b,
+                                UnifiedSearchResult *results,
+                                uint32_t max_results);
+
 #endif // INVERTED_INDEX_H
