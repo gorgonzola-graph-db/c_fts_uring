@@ -14,7 +14,8 @@ int inverted_index_add_posting(UnifiedShard *shard,
                                uint32_t term_id,
                                uint32_t doc_id,
                                uint32_t data_page_id,
-                               uint16_t data_slot_id) {
+                               uint16_t data_slot_id,
+                               uint32_t term_position) {
     uint32_t posting_page_id;
     uint16_t slot_id;
     bool found = btree_search(&shard->btree, (uint64_t)term_id, &posting_page_id, &slot_id);
@@ -24,10 +25,23 @@ int inverted_index_add_posting(UnifiedShard *shard,
         if (!f) return -1;
         
         InvertedIndexPage *page = (InvertedIndexPage *)f->page_data;
+        
+        // If this is the same document, just append the position
+        if (page->posting_count > 0 && page->postings[page->posting_count - 1].doc_id == doc_id) {
+            InvertedPosting *last = &page->postings[page->posting_count - 1];
+            if (last->pos_count < MAX_POSITIONS_PER_POSTING) {
+                last->positions[last->pos_count++] = term_position;
+            }
+            buffer_pool_unpin_page(&shard->bpm, posting_page_id, true, HINT_NORMAL);
+            return 0;
+        }
+
         if (page->posting_count < MAX_POSTINGS_PER_PAGE) {
             page->postings[page->posting_count].doc_id = doc_id;
             page->postings[page->posting_count].data_page_id = data_page_id;
             page->postings[page->posting_count].data_slot_id = data_slot_id;
+            page->postings[page->posting_count].pos_count = 1;
+            page->postings[page->posting_count].positions[0] = term_position;
             page->posting_count++;
             buffer_pool_unpin_page(&shard->bpm, posting_page_id, true, HINT_NORMAL);
         } else {
@@ -52,6 +66,8 @@ int inverted_index_add_posting(UnifiedShard *shard,
             new_page->postings[0].doc_id = doc_id;
             new_page->postings[0].data_page_id = data_page_id;
             new_page->postings[0].data_slot_id = data_slot_id;
+            new_page->postings[0].pos_count = 1;
+            new_page->postings[0].positions[0] = term_position;
             
             page->next_posting_page = new_page_id;
             
@@ -77,6 +93,8 @@ int inverted_index_add_posting(UnifiedShard *shard,
         new_page->postings[0].doc_id = doc_id;
         new_page->postings[0].data_page_id = data_page_id;
         new_page->postings[0].data_slot_id = data_slot_id;
+        new_page->postings[0].pos_count = 1;
+        new_page->postings[0].positions[0] = term_position;
         
         // Unpin BEFORE btree_insert to free buffer pool frames for the B-Tree
         buffer_pool_unpin_page(&shard->bpm, new_page_id, true, HINT_NORMAL);
