@@ -77,6 +77,12 @@ static int ftsConnect(sqlite3 *db, void *pAux, int argc, const char *const*argv,
             strcpy(path, "./fts_uring_data");
         }
 
+        uint32_t max_ram_mb = 1024; // Default 1GB
+        if (argc > 4) {
+            max_ram_mb = atoi(argv[4]);
+            if (max_ram_mb < 64) max_ram_mb = 64; // Minimum 64MB
+        }
+
         if (g_engine && strcmp(g_engine->base_path, path) == 0) {
             pNew->engine = g_engine;
             g_engine_ref_count++;
@@ -86,7 +92,7 @@ static int ftsConnect(sqlite3 *db, void *pAux, int argc, const char *const*argv,
                 sqlite3_free(pNew);
                 return SQLITE_NOMEM;
             }
-            engine_init(pNew->engine, path, 4);
+            engine_init(pNew->engine, path, 4, max_ram_mb);
             g_engine = pNew->engine;
             g_engine_ref_count = 1;
         }

@@ -95,11 +95,11 @@ typedef struct {
 // ==================== Function Prototypes ====================
 
 // Engine lifecycle
-int  engine_init(UnifiedEngine *engine, const char *base_path, uint32_t num_shards);
+int  engine_init(UnifiedEngine *engine, const char *base_path, uint32_t num_shards, uint32_t max_ram_mb);
 void engine_close(UnifiedEngine *engine);
 
 // Shard lifecycle (called internally by engine_init)
-int  shard_init(UnifiedShard *shard, uint32_t shard_id, const char *base_path);
+int  shard_init(UnifiedShard *shard, uint32_t shard_id, const char *base_path, uint32_t pool_size);
 void shard_close(UnifiedShard *shard);
 void shard_close_with_path(UnifiedShard *shard, const char *base_path);
 

@@ -13,7 +13,7 @@ int main() {
         fprintf(stderr, "Failed to allocate UnifiedEngine (size: %zu bytes)\n", sizeof(UnifiedEngine));
         return 1;
     }
-    if (engine_init(engine, "./fts_uring_data", 1) != 0) {
+    if (engine_init(engine, "./fts_uring_data", 1, 6144) != 0) {
         fprintf(stderr, "Failed to initialize engine.\n");
         return 1;
     }
