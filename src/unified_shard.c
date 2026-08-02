@@ -33,9 +33,9 @@ int shard_init(UnifiedShard *shard, uint32_t shard_id, const char *base_path, ui
     if (st.st_size == 0) {
         char zero[4096] = {0};
         // Initialize with 3 pages minimum
-        if (write(shard->data_fd, zero, 4096) < 0) return -1;
-        if (write(shard->data_fd, zero, 4096) < 0) return -1;
-        if (write(shard->data_fd, zero, 4096) < 0) return -1;
+        if (fts_vfs_write_sync(&shard->bpm.vfs_ctx, shard->data_fd, zero, 4096, 0) < 0) return -1;
+        if (fts_vfs_write_sync(&shard->bpm.vfs_ctx, shard->data_fd, zero, 4096, 4096) < 0) return -1;
+        if (fts_vfs_write_sync(&shard->bpm.vfs_ctx, shard->data_fd, zero, 4096, 8192) < 0) return -1;
         
         
         Frame* ts_frame = buffer_pool_fetch_page(&shard->bpm, 1);
@@ -168,8 +168,7 @@ int shard_insert_document(UnifiedShard *shard, WALManager *wal,
         shard->active_data_page_id = new_page_id;
         
         char zero[4096] = {0};
-        lseek(shard->data_fd, new_page_id * 4096, SEEK_SET);
-        if (write(shard->data_fd, zero, 4096) < 0) {
+        if (fts_vfs_write_sync(&shard->bpm.vfs_ctx, shard->data_fd, zero, 4096, new_page_id * 4096) < 0) {
             return -1;
         }
 

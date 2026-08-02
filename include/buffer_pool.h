@@ -16,7 +16,7 @@ typedef struct {
     char page_data[PAGE_SIZE];
 } Frame;
 
-#include <liburing.h>
+#include "fts_vfs.h"
 
 typedef struct {
     Frame *frames;       // Dynamically allocated
@@ -24,7 +24,7 @@ typedef struct {
     uint32_t clock_hand;
     int disk_fd;
     WALManager *wal;
-    struct io_uring ring;
+    fts_vfs_context_t vfs_ctx;
 } BufferPoolManager;
 
 typedef enum {
