@@ -16,8 +16,12 @@
 typedef struct fts_vfs_context {
 #ifdef FTS_USE_URING
     struct io_uring ring;
+    int submitted_count;
 #else
-    int dummy; // Just to avoid empty struct
+    #define MAX_BATCH_EVENTS 1024
+    void* batch_user_data[MAX_BATCH_EVENTS];
+    int batch_results[MAX_BATCH_EVENTS];
+    int batch_count;
 #endif
     bool initialized;
 } fts_vfs_context_t;
