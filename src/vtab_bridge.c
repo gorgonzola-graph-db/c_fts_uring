@@ -42,15 +42,10 @@ int python_insert_document(const uint8_t node_id[16],
     
     if (text) {
         char buf[4096];
-        strncpy(buf, text, sizeof(buf)-1);
-        buf[sizeof(buf)-1] = '\0';
-        
-        char *saveptr;
-        char *token = strtok_r(buf, " \t\r\n.,;:!?()[]{}<>+=-*/&|%\"'\\", &saveptr);
-        while (token && num_terms < 1024) {
-            for (char *p = token; *p; p++) *p = tolower(*p);
-            term_ids[num_terms++] = lexicon_insert(&g_lexicon, token);
-            token = strtok_r(NULL, " \t\r\n.,;:!?()[]{}<>+=-*/&|%\"'\\", &saveptr);
+        char *tokens[1024];
+        num_terms = lexicon_tokenize(text, buf, sizeof(buf), tokens, 1024);
+        for (int i = 0; i < num_terms; i++) {
+            term_ids[i] = lexicon_insert(&g_lexicon, tokens[i]);
         }
     }
     
@@ -132,8 +127,9 @@ static int ftsDisconnect(sqlite3_vtab *pVtab) {
     if (g_engine_ref_count <= 0) {
         async_search_shutdown();
         if (g_lexicon_initialized) {
-            lexicon_destroy(&g_lexicon);
-            g_lexicon_initialized = false;
+            // Do not destroy lexicon in memory because it's not persisted to disk yet.
+            // lexicon_destroy(&g_lexicon);
+            // g_lexicon_initialized = false;
         }
     }
     return SQLITE_OK;
