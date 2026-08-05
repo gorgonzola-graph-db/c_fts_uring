@@ -6,7 +6,7 @@
 #include <stdbool.h>
 #include <sys/types.h>
 
-#ifdef __linux__
+#if defined(__linux__) && !defined(NO_URING)
 #include <liburing.h>
 #define FTS_USE_URING
 #else
