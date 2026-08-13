@@ -112,9 +112,15 @@ static void shard_search_work_cb(uv_work_t *req) {
         work->result_count = merge_rrf(bm25_results, bm25_count, vec_results, vec_count, work->results, MAX_RESULTS_PER_SHARD);
     } else if (work->query.use_text) {
         memcpy(work->results, bm25_results, sizeof(UnifiedSearchResult) * bm25_count);
+        for (uint32_t i = 0; i < bm25_count; i++) {
+            work->results[i].rrf_score = work->results[i].bm25f_score;
+        }
         work->result_count = bm25_count;
     } else {
         memcpy(work->results, vec_results, sizeof(UnifiedSearchResult) * vec_count);
+        for (uint32_t i = 0; i < vec_count; i++) {
+            work->results[i].rrf_score = work->results[i].cosine_score;
+        }
         work->result_count = vec_count;
     }
 }
