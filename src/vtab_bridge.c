@@ -26,7 +26,14 @@ typedef struct {
 } fts_uring_cursor;
 
 UnifiedEngine *g_engine = NULL;
-static int g_engine_ref_count = 0;
+
+#define MAX_ACTIVE_ENGINES 64
+typedef struct {
+    UnifiedEngine *engine;
+    int ref_count;
+} ActiveEngineEntry;
+
+static ActiveEngineEntry g_active_engines[MAX_ACTIVE_ENGINES];
 
 // Global insert for Python bindings
 #include <ctype.h>
@@ -59,14 +66,17 @@ static int ftsConnect(sqlite3 *db, void *pAux, int argc, const char *const*argv,
         if (!pNew) return SQLITE_NOMEM;
         memset(pNew, 0, sizeof(*pNew));
         
-        char path[256];
+        char path[512];
         if (argc > 3) {
             // Remove quotes if present
-            strncpy(path, argv[3], 255);
-            path[255] = '\0';
+            strncpy(path, argv[3], sizeof(path) - 1);
+            path[sizeof(path) - 1] = '\0';
             if (path[0] == '\'' || path[0] == '"') {
-                memmove(path, path+1, strlen(path));
-                path[strlen(path)-1] = '\0';
+                size_t len = strlen(path);
+                if (len >= 2) {
+                    memmove(path, path + 1, len - 2);
+                    path[len - 2] = '\0';
+                }
             }
         } else {
             strcpy(path, "./fts_uring_data");
@@ -78,18 +88,34 @@ static int ftsConnect(sqlite3 *db, void *pAux, int argc, const char *const*argv,
             if (max_ram_mb < 64) max_ram_mb = 64; // Minimum 64MB
         }
 
-        if (g_engine && strcmp(g_engine->base_path, path) == 0) {
-            pNew->engine = g_engine;
-            g_engine_ref_count++;
+        UnifiedEngine *found_engine = NULL;
+        for (int i = 0; i < MAX_ACTIVE_ENGINES; i++) {
+            if (g_active_engines[i].engine && strcmp(g_active_engines[i].engine->base_path, path) == 0) {
+                found_engine = g_active_engines[i].engine;
+                g_active_engines[i].ref_count++;
+                break;
+            }
+        }
+
+        if (found_engine) {
+            pNew->engine = found_engine;
+            g_engine = found_engine;
         } else {
             pNew->engine = sqlite3_malloc64( sizeof(UnifiedEngine) );
             if (!pNew->engine) {
                 sqlite3_free(pNew);
                 return SQLITE_NOMEM;
             }
+            memset(pNew->engine, 0, sizeof(UnifiedEngine));
             engine_init(pNew->engine, path, 4, max_ram_mb);
             g_engine = pNew->engine;
-            g_engine_ref_count = 1;
+            for (int i = 0; i < MAX_ACTIVE_ENGINES; i++) {
+                if (!g_active_engines[i].engine) {
+                    g_active_engines[i].engine = pNew->engine;
+                    g_active_engines[i].ref_count = 1;
+                    break;
+                }
+            }
         }
         
         // Initialize global lexicon once
@@ -110,27 +136,46 @@ static int ftsDisconnect(sqlite3_vtab *pVtab) {
     fts_uring_vtab *p = (fts_uring_vtab*)pVtab;
     if( p ){
         if( p->engine ){
-            if (g_engine == p->engine) {
-                g_engine_ref_count--;
-                if (g_engine_ref_count <= 0) {
-                    engine_close(p->engine);
-                    sqlite3_free(p->engine);
-                    g_engine = NULL;
+            bool tracked = false;
+            for (int i = 0; i < MAX_ACTIVE_ENGINES; i++) {
+                if (g_active_engines[i].engine == p->engine) {
+                    tracked = true;
+                    g_active_engines[i].ref_count--;
+                    if (g_active_engines[i].ref_count <= 0) {
+                        engine_close(p->engine);
+                        sqlite3_free(p->engine);
+                        g_active_engines[i].engine = NULL;
+                        g_active_engines[i].ref_count = 0;
+                        if (g_engine == p->engine) {
+                            g_engine = NULL;
+                            for (int j = 0; j < MAX_ACTIVE_ENGINES; j++) {
+                                if (g_active_engines[j].engine) {
+                                    g_engine = g_active_engines[j].engine;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    break;
                 }
-            } else {
+            }
+            if (!tracked) {
                 engine_close(p->engine);
+                if (g_engine == p->engine) g_engine = NULL;
                 sqlite3_free(p->engine);
             }
         }
         sqlite3_free(p);
     }
-    if (g_engine_ref_count <= 0) {
-        async_search_shutdown();
-        if (g_lexicon_initialized) {
-            // Do not destroy lexicon in memory because it's not persisted to disk yet.
-            // lexicon_destroy(&g_lexicon);
-            // g_lexicon_initialized = false;
+    bool any_active = false;
+    for (int i = 0; i < MAX_ACTIVE_ENGINES; i++) {
+        if (g_active_engines[i].engine) {
+            any_active = true;
+            break;
         }
+    }
+    if (!any_active) {
+        async_search_shutdown();
     }
     return SQLITE_OK;
 }

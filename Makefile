@@ -1,7 +1,10 @@
 CC = gcc
-CFLAGS = -Wall -O2 -fPIC -Iinclude
+COMMA := ,
+SYSROOT_INC := $(if $(wildcard $(HOME)/.local/sysroot/usr/include),-I$(HOME)/.local/sysroot/usr/include,)
+SYSROOT_LIB := $(if $(wildcard $(HOME)/.local/sysroot/usr/lib/x86_64-linux-gnu),-L$(HOME)/.local/sysroot/usr/lib/x86_64-linux-gnu -Wl$(COMMA)-rpath$(COMMA)$(HOME)/.local/sysroot/usr/lib/x86_64-linux-gnu,)
+CFLAGS = -Wall -O2 -fPIC -Iinclude $(SYSROOT_INC)
 UNAME_S := $(shell uname -s)
-LDFLAGS = -luv -lm
+LDFLAGS = $(SYSROOT_LIB) -luv -lm
 
 ifeq ($(UNAME_S),Linux)
     LDFLAGS += -lrt -luring

@@ -11,7 +11,7 @@ void buffer_pool_init(BufferPoolManager *bpm, int disk_fd, WALManager *wal, uint
     bpm->clock_hand = 0;
     bpm->pool_size = pool_size;
     
-    bpm->frames = malloc(sizeof(Frame) * pool_size);
+    bpm->frames = calloc(pool_size, sizeof(Frame));
     if (!bpm->frames) {
         fprintf(stderr, "Failed to allocate buffer pool frames (size: %u)\n", pool_size);
         exit(1);
@@ -19,6 +19,9 @@ void buffer_pool_init(BufferPoolManager *bpm, int disk_fd, WALManager *wal, uint
 
     for (uint32_t i = 0; i < pool_size; i++) {
         bpm->frames[i].page_id = (uint32_t)-1; // Invalid page_id
+        bpm->frames[i].pin_count = 0;
+        bpm->frames[i].is_dirty = false;
+        bpm->frames[i].page_lsn = 0;
     }
     
     // Initialize VFS with a queue size of 32
@@ -36,6 +39,7 @@ void buffer_pool_destroy(BufferPoolManager *bpm) {
 }
 
 int buffer_pool_flush_page(BufferPoolManager *bpm, uint32_t page_id) {
+    if (page_id == (uint32_t)-1) return -1;
     for (uint32_t i = 0; i < bpm->pool_size; i++) {
         Frame *f = &bpm->frames[i];
         if (f->page_id == page_id) {
@@ -68,7 +72,7 @@ static int find_victim_frame(BufferPoolManager *bpm) {
         bpm->clock_hand = (bpm->clock_hand + 1) % bpm->pool_size;
 
         if (f->page_id == (uint32_t)-1 || f->pin_count == 0) {
-            if (f->is_dirty) {
+            if (f->page_id != (uint32_t)-1 && f->is_dirty) {
                 buffer_pool_flush_page(bpm, f->page_id);
             }
             return current_idx;

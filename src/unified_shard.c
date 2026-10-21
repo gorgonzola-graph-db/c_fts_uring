@@ -168,7 +168,7 @@ int shard_insert_document(UnifiedShard *shard, WALManager *wal,
         shard->active_data_page_id = new_page_id;
         
         char zero[4096] = {0};
-        if (fts_vfs_write_sync(&shard->bpm.vfs_ctx, shard->data_fd, zero, 4096, new_page_id * 4096) < 0) {
+        if (fts_vfs_write_sync(&shard->bpm.vfs_ctx, shard->data_fd, zero, 4096, (off_t)new_page_id * 4096) < 0) {
             return -1;
         }
 

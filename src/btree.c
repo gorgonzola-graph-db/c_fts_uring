@@ -80,7 +80,7 @@ static void split_leaf_node(BTree *tree, uint32_t leaf_page_id, uint32_t txn_id)
 
     // Allocate disk space for the new page
     char zero[4096] = {0};
-    fts_vfs_write_sync(&tree->bpm->vfs_ctx, tree->bpm->disk_fd, zero, 4096, new_leaf_id * 4096);
+    fts_vfs_write_sync(&tree->bpm->vfs_ctx, tree->bpm->disk_fd, zero, 4096, (off_t)new_leaf_id * 4096);
 
     Frame *f_new = buffer_pool_fetch_page(tree->bpm, new_leaf_id);
     if (!f_new) {

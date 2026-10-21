@@ -155,6 +155,9 @@ int engine_search_async(UnifiedEngine *engine,
                         const UnifiedQuery *query,
                         UnifiedSearchResult *results,
                         uint32_t max_results) {
+    if (!async_search_loop) {
+        if (async_search_init() != 0) return 0;
+    }
     AsyncSearchContext ctx;
     memset(&ctx, 0, sizeof(ctx));
     ctx.num_shards = engine->num_shards;
