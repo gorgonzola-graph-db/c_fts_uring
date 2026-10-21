@@ -88,11 +88,27 @@ static void shard_search_work_cb(uv_work_t *req) {
         if (work->query.is_phrase && work->query.num_terms > 0) {
             bm25_count = shard_search_phrase_indexed(work->shard, work->query.term_ids, work->query.num_terms, work->idf, work->avgdl, work->weights, work->k1, work->b, bm25_results, MAX_RESULTS_PER_SHARD);
         } else if (work->query.num_terms > 0) {
-            bm25_count = shard_search_bm25f_indexed(work->shard, work->query.term_ids[0], work->idf, 
-                                                     work->avgdl, work->weights, 
-                                                     work->k1, work->b, 
-                                                     bm25_results, 
-                                                     MAX_RESULTS_PER_SHARD);
+            for (uint32_t t = 0; t < work->query.num_terms; t++) {
+                UnifiedSearchResult term_results[MAX_RESULTS_PER_SHARD];
+                uint32_t term_count = shard_search_bm25f_indexed(
+                    work->shard, work->query.term_ids[t], work->idf,
+                    work->avgdl, work->weights, work->k1, work->b,
+                    term_results, MAX_RESULTS_PER_SHARD
+                );
+                for (uint32_t r = 0; r < term_count; r++) {
+                    bool found = false;
+                    for (uint32_t m = 0; m < bm25_count; m++) {
+                        if (memcmp(bm25_results[m].node_id, term_results[r].node_id, 16) == 0) {
+                            bm25_results[m].bm25f_score += term_results[r].bm25f_score;
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found && bm25_count < MAX_RESULTS_PER_SHARD) {
+                        bm25_results[bm25_count++] = term_results[r];
+                    }
+                }
+            }
         } else {
             bm25_count = shard_search_bm25f_indexed(work->shard, 0, work->idf, 
                                                      work->avgdl, work->weights, 
