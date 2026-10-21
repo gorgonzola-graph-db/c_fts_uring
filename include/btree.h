@@ -46,5 +46,6 @@ typedef struct {
 void btree_init(BTree *tree, BufferPoolManager *bpm, uint32_t root_page_id, uint32_t *next_page_id_counter);
 bool btree_search(BTree *tree, uint64_t key, uint32_t *out_page_id, uint16_t *out_slot_id);
 bool btree_insert(BTree *tree, uint64_t key, uint32_t page_id, uint16_t slot_id, uint32_t txn_id);
+bool btree_update(BTree *tree, uint64_t key, uint32_t page_id, uint16_t slot_id);
 
 #endif // BTREE_H

@@ -118,6 +118,36 @@ static void split_leaf_node(BTree *tree, uint32_t leaf_page_id, uint32_t txn_id)
     buffer_pool_unpin_page(tree->bpm, new_leaf_id, true, HINT_NORMAL);
 }
 
+bool btree_update(BTree *tree, uint64_t key, uint32_t page_id, uint16_t slot_id) {
+    uint32_t curr_page_id = tree->root_page_id;
+
+    while (curr_page_id != INVALID_PAGE_ID) {
+        Frame *f = buffer_pool_fetch_page(tree->bpm, curr_page_id);
+        if (!f) return false;
+
+        PageHeader *hdr = (PageHeader *)f->page_data;
+        if (hdr->page_type == PAGE_TYPE_BTREE_LEAF) {
+            BTreeLeafNode *leaf = (BTreeLeafNode *)f->page_data;
+            for (uint16_t i = 0; i < hdr->slot_count; i++) {
+                if (leaf->entries[i].key == key) {
+                    leaf->entries[i].page_id = page_id;
+                    leaf->entries[i].slot_id = slot_id;
+                    slotted_page_compute_checksum(f->page_data);
+                    buffer_pool_unpin_page(tree->bpm, curr_page_id, true, HINT_NORMAL);
+                    return true;
+                }
+            }
+            uint32_t next_leaf = leaf->next_leaf_id;
+            buffer_pool_unpin_page(tree->bpm, curr_page_id, false, HINT_NORMAL);
+            curr_page_id = next_leaf;
+        } else {
+            buffer_pool_unpin_page(tree->bpm, curr_page_id, false, HINT_NORMAL);
+            return false;
+        }
+    }
+    return false;
+}
+
 bool btree_insert(BTree *tree, uint64_t key, uint32_t page_id, uint16_t slot_id, uint32_t txn_id) {
     uint32_t curr_page_id = tree->root_page_id;
 
@@ -133,22 +163,32 @@ bool btree_insert(BTree *tree, uint64_t key, uint32_t page_id, uint16_t slot_id,
 
     BTreeLeafNode *leaf = (BTreeLeafNode *)f->page_data;
 
-    // Check if leaf needs split
-    if (leaf->header.slot_count >= BTREE_MAX_LEAF_ENTRIES) {
-        buffer_pool_unpin_page(tree->bpm, curr_page_id, false, HINT_NORMAL);
-        split_leaf_node(tree, curr_page_id, txn_id);
-        // Re-fetch after split
-        f = buffer_pool_fetch_page(tree->bpm, curr_page_id);
-        leaf = (BTreeLeafNode *)f->page_data;
-    }
-
     // Traverse to correct leaf segment if key belongs to a split right-sibling
     while (leaf->next_leaf_id != INVALID_PAGE_ID && leaf->header.slot_count > 0 && key > leaf->entries[leaf->header.slot_count - 1].key) {
         uint32_t next_id = leaf->next_leaf_id;
         buffer_pool_unpin_page(tree->bpm, curr_page_id, false, HINT_NORMAL);
         curr_page_id = next_id;
         f = buffer_pool_fetch_page(tree->bpm, curr_page_id);
+        if (!f) return false;
         leaf = (BTreeLeafNode *)f->page_data;
+    }
+
+    // Check if target leaf needs split
+    if (leaf->header.slot_count >= BTREE_MAX_LEAF_ENTRIES) {
+        buffer_pool_unpin_page(tree->bpm, curr_page_id, false, HINT_NORMAL);
+        split_leaf_node(tree, curr_page_id, txn_id);
+        // Re-fetch after split
+        f = buffer_pool_fetch_page(tree->bpm, curr_page_id);
+        if (!f) return false;
+        leaf = (BTreeLeafNode *)f->page_data;
+        if (leaf->next_leaf_id != INVALID_PAGE_ID && leaf->header.slot_count > 0 && key > leaf->entries[leaf->header.slot_count - 1].key) {
+            uint32_t next_id = leaf->next_leaf_id;
+            buffer_pool_unpin_page(tree->bpm, curr_page_id, false, HINT_NORMAL);
+            curr_page_id = next_id;
+            f = buffer_pool_fetch_page(tree->bpm, curr_page_id);
+            if (!f) return false;
+            leaf = (BTreeLeafNode *)f->page_data;
+        }
     }
 
     // Insert sorted

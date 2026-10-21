@@ -61,20 +61,18 @@ int inverted_index_add_posting(UnifiedShard *shard,
             InvertedIndexPage *new_page = (InvertedIndexPage *)f_new->page_data;
             new_page->term_id = term_id;
             new_page->posting_count = 1;
-            new_page->next_posting_page = INVALID_PAGE_ID;
+            new_page->next_posting_page = posting_page_id;
             new_page->postings[0].doc_id = doc_id;
             new_page->postings[0].data_page_id = data_page_id;
             new_page->postings[0].data_slot_id = data_slot_id;
             new_page->postings[0].pos_count = 1;
             new_page->postings[0].positions[0] = term_position;
             
-            page->next_posting_page = new_page_id;
-            
-            // Unpin BOTH pages before btree_insert to free buffer pool frames
-            buffer_pool_unpin_page(&shard->bpm, posting_page_id, true, HINT_NORMAL);
+            // Unpin BOTH pages before btree_update to free buffer pool frames
+            buffer_pool_unpin_page(&shard->bpm, posting_page_id, false, HINT_NORMAL);
             buffer_pool_unpin_page(&shard->bpm, new_page_id, true, HINT_NORMAL);
             
-            btree_insert(&shard->btree, (uint64_t)term_id, new_page_id, 0, 0);
+            btree_update(&shard->btree, (uint64_t)term_id, new_page_id, 0);
         }
     } else {
         uint32_t new_page_id = shard->next_page_id++;
