@@ -114,11 +114,15 @@ int inverted_index_get_postings(UnifiedShard *shard,
     uint32_t total_count = 0;
     uint32_t current_page_id = posting_page_id;
     
-    while (current_page_id != INVALID_PAGE_ID && total_count < max_postings) {
+    while (current_page_id != INVALID_PAGE_ID && current_page_id >= 3 && current_page_id < shard->next_page_id && total_count < max_postings) {
         Frame *f = buffer_pool_fetch_page(&shard->bpm, current_page_id);
         if (!f) break;
         
         InvertedIndexPage *page = (InvertedIndexPage *)f->page_data;
+        if (page->posting_count == 0 || page->posting_count > MAX_POSTINGS_PER_PAGE) {
+            buffer_pool_unpin_page(&shard->bpm, current_page_id, false, HINT_NORMAL);
+            break;
+        }
         
         for (uint32_t i = 0; i < page->posting_count && total_count < max_postings; i++) {
             out_postings[total_count++] = page->postings[i];
@@ -126,6 +130,7 @@ int inverted_index_get_postings(UnifiedShard *shard,
         
         uint32_t next_page = page->next_posting_page;
         buffer_pool_unpin_page(&shard->bpm, current_page_id, false, HINT_NORMAL);
+        if (next_page == current_page_id) break;
         current_page_id = next_page;
     }
     

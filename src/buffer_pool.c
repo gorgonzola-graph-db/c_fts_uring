@@ -135,8 +135,6 @@ void buffer_pool_unpin_page(BufferPoolManager *bpm, uint32_t page_id, bool is_di
 }
 
 void buffer_pool_flush_all(BufferPoolManager *bpm) {
-    int submitted = 0;
-    
     // First, ensure WAL is flushed if we have any dirty pages
     bool any_dirty = false;
     for (uint32_t i = 0; i < bpm->pool_size; i++) {
@@ -150,22 +148,38 @@ void buffer_pool_flush_all(BufferPoolManager *bpm) {
         wal_flush(bpm->wal);
     }
 
-    // Submit all writes at once using VFS
+    // Flush dirty pages in bounded batches (io_uring queue_size is 32)
+    const int BATCH_LIMIT = 16;
+    int submitted = 0;
+    void *completed_data[32];
     fts_vfs_batch_begin(&bpm->vfs_ctx);
+
     for (uint32_t i = 0; i < bpm->pool_size; i++) {
         Frame *f = &bpm->frames[i];
         if (f->page_id != (uint32_t)-1 && f->is_dirty && bpm->disk_fd >= 0) {
             off_t offset = (off_t)f->page_id * PAGE_SIZE;
             if (fts_vfs_batch_add_write(&bpm->vfs_ctx, bpm->disk_fd, f->page_data, PAGE_SIZE, offset, f) == 0) {
                 submitted++;
+            } else {
+                // Fallback to synchronous write if batch queue is full
+                if (fts_vfs_write_sync(&bpm->vfs_ctx, bpm->disk_fd, f->page_data, PAGE_SIZE, offset) >= 0) {
+                    f->is_dirty = false;
+                }
+            }
+            if (submitted >= BATCH_LIMIT) {
+                int completed = fts_vfs_batch_submit_and_wait(&bpm->vfs_ctx, completed_data, 32);
+                for (int c = 0; c < completed; c++) {
+                    Frame *cf = (Frame *)completed_data[c];
+                    if (cf) cf->is_dirty = false;
+                }
+                submitted = 0;
+                fts_vfs_batch_begin(&bpm->vfs_ctx);
             }
         }
     }
     
     if (submitted > 0) {
-        void *completed_data[1024];
-        int completed = fts_vfs_batch_submit_and_wait(&bpm->vfs_ctx, completed_data, 1024);
-        
+        int completed = fts_vfs_batch_submit_and_wait(&bpm->vfs_ctx, completed_data, 32);
         for (int i = 0; i < completed; i++) {
             Frame *f = (Frame *)completed_data[i];
             if (f) {

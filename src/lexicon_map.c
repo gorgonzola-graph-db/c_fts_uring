@@ -7,14 +7,18 @@
 #define FNV_PRIME 16777619
 #define FNV_OFFSET_BASIS 2166136261U
 
-uint32_t lexicon_hash(const char *term) {
+static uint32_t lexicon_term_hash32(const char *term) {
     uint32_t hash = FNV_OFFSET_BASIS;
     while (*term) {
         hash ^= (unsigned char)*term;
         hash *= FNV_PRIME;
         term++;
     }
-    return hash % LEXICON_BUCKET_COUNT;
+    return hash == 0 ? 1 : hash;
+}
+
+uint32_t lexicon_hash(const char *term) {
+    return lexicon_term_hash32(term) % LEXICON_BUCKET_COUNT;
 }
 
 void lexicon_init(Lexicon *lex) {
@@ -62,7 +66,7 @@ uint32_t lexicon_insert(Lexicon *lex, const char *term) {
     
     strncpy(new_entry->term, term, LEXICON_MAX_TERM_LEN);
     new_entry->term[LEXICON_MAX_TERM_LEN] = '\0';
-    new_entry->term_id = lex->next_term_id++;
+    new_entry->term_id = lexicon_term_hash32(term);
     new_entry->document_frequency = 1;
     new_entry->next = lex->buckets[bucket];
     
